@@ -1,3 +1,4 @@
+// src/services/cuponesService.js
 const { query, pool } = require("../../db");
 
 // ============================================
@@ -18,14 +19,20 @@ const getAllCupones = async () => {
       c.aplica_servicios,
       c.aplica_productos,
       c.estado,
+      c.empleado_id,
+      e.rol AS empleado_rol,
+      p.nombres AS empleado_nombres,
+      p.apellidos AS empleado_apellidos,
       COALESCE(
         ARRAY_AGG(DISTINCT cs.sucursal_id::text) FILTER (WHERE cs.sucursal_id IS NOT NULL),
         ARRAY[]::text[]
       ) AS sucursales_ids
     FROM cupones c
     LEFT JOIN cupon_sucursal cs ON c.id = cs.cupon_id
+    LEFT JOIN empleados e ON c.empleado_id = e.id
+    LEFT JOIN personas p ON e.persona_id = p.id
     WHERE c.estado IN (0, 1)
-    GROUP BY c.id
+    GROUP BY c.id, e.id, p.id
     ORDER BY c.fecha_inicio DESC, c.id DESC
   `;
 
@@ -51,6 +58,11 @@ const getAllCupones = async () => {
       ...(row.aplica_productos ? ["productos"] : []),
     ],
     sucursalesIds: row.sucursales_ids || [],
+    empleadoId: row.empleado_id ? row.empleado_id.toString() : null,
+    empleadoNombre: row.empleado_id
+      ? `${row.empleado_nombres} ${row.empleado_apellidos}`.trim()
+      : null,
+    empleadoRol: row.empleado_rol || null,
   }));
 };
 
@@ -69,6 +81,31 @@ const getSucursales = async () => {
 };
 
 // ============================================
+// GET EMPLEADOS (para el selector)
+// ============================================
+const getEmpleados = async () => {
+  const result = await query(`
+    SELECT 
+      e.id,
+      e.rol,
+      p.nombres,
+      p.apellidos
+    FROM empleados e
+    INNER JOIN personas p ON e.persona_id = p.id
+    WHERE e.estado = 1
+    ORDER BY p.nombres, p.apellidos
+  `);
+
+  return result.rows.map((row) => ({
+    id: row.id.toString(),
+    rol: row.rol,
+    nombres: row.nombres,
+    apellidos: row.apellidos,
+    nombreCompleto: `${row.nombres} ${row.apellidos}`.trim(),
+  }));
+};
+
+// ============================================
 // CREATE CUPON
 // ============================================
 const createCupon = async (data) => {
@@ -82,6 +119,7 @@ const createCupon = async (data) => {
     usosMaximos,
     aplicableA,
     sucursalesIds,
+    empleadoId,
   } = data;
 
   const client = await pool.connect();
@@ -92,12 +130,11 @@ const createCupon = async (data) => {
     const aplicaServicios = aplicableA.includes("servicios");
     const aplicaProductos = aplicableA.includes("productos");
 
-    // Insertar cupón
     const cuponResult = await client.query(
       `INSERT INTO cupones 
         (codigo, tipo, valor_descuento, descripcion, fecha_inicio, fecha_fin, 
-         usos, usos_maximos, aplica_servicios, aplica_productos, estado)
-       VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, 1)
+         usos, usos_maximos, aplica_servicios, aplica_productos, estado, empleado_id)
+       VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, 1, $10)
        RETURNING id`,
       [
         codigo,
@@ -109,12 +146,12 @@ const createCupon = async (data) => {
         usosMaximos || 0,
         aplicaServicios,
         aplicaProductos,
+        empleadoId || null,
       ]
     );
 
     const cuponId = cuponResult.rows[0].id;
 
-    // Insertar sucursales
     for (const sucursalId of sucursalesIds) {
       await client.query(
         `INSERT INTO cupon_sucursal (cupon_id, sucursal_id) VALUES ($1, $2)`,
@@ -147,6 +184,7 @@ const updateCupon = async (id, data) => {
     usosMaximos,
     aplicableA,
     sucursalesIds,
+    empleadoId,
   } = data;
 
   const client = await pool.connect();
@@ -157,13 +195,12 @@ const updateCupon = async (id, data) => {
     const aplicaServicios = aplicableA.includes("servicios");
     const aplicaProductos = aplicableA.includes("productos");
 
-    // Actualizar cupón
     const cuponResult = await client.query(
       `UPDATE cupones 
        SET codigo = $1, tipo = $2, valor_descuento = $3, descripcion = $4, 
            fecha_inicio = $5, fecha_fin = $6, usos_maximos = $7,
-           aplica_servicios = $8, aplica_productos = $9
-       WHERE id = $10 AND estado IN (0, 1)
+           aplica_servicios = $8, aplica_productos = $9, empleado_id = $10
+       WHERE id = $11 AND estado IN (0, 1)
        RETURNING id`,
       [
         codigo,
@@ -175,6 +212,7 @@ const updateCupon = async (id, data) => {
         usosMaximos || 0,
         aplicaServicios,
         aplicaProductos,
+        empleadoId || null,
         id,
       ]
     );
@@ -183,10 +221,8 @@ const updateCupon = async (id, data) => {
       throw new Error("Cupón no encontrado");
     }
 
-    // Eliminar sucursales existentes
     await client.query(`DELETE FROM cupon_sucursal WHERE cupon_id = $1`, [id]);
 
-    // Insertar nuevas sucursales
     for (const sucursalId of sucursalesIds) {
       await client.query(
         `INSERT INTO cupon_sucursal (cupon_id, sucursal_id) VALUES ($1, $2)`,
@@ -249,14 +285,20 @@ const getCuponById = async (id) => {
       c.aplica_servicios,
       c.aplica_productos,
       c.estado,
+      c.empleado_id,
+      e.rol AS empleado_rol,
+      p.nombres AS empleado_nombres,
+      p.apellidos AS empleado_apellidos,
       COALESCE(
         ARRAY_AGG(DISTINCT cs.sucursal_id::text) FILTER (WHERE cs.sucursal_id IS NOT NULL),
         ARRAY[]::text[]
       ) AS sucursales_ids
     FROM cupones c
     LEFT JOIN cupon_sucursal cs ON c.id = cs.cupon_id
+    LEFT JOIN empleados e ON c.empleado_id = e.id
+    LEFT JOIN personas p ON e.persona_id = p.id
     WHERE c.id = $1
-    GROUP BY c.id
+    GROUP BY c.id, e.id, p.id
   `;
 
   const result = await query(sql, [id]);
@@ -287,12 +329,18 @@ const getCuponById = async (id) => {
       ...(row.aplica_productos ? ["productos"] : []),
     ],
     sucursalesIds: row.sucursales_ids || [],
+    empleadoId: row.empleado_id ? row.empleado_id.toString() : null,
+    empleadoNombre: row.empleado_id
+      ? `${row.empleado_nombres} ${row.empleado_apellidos}`.trim()
+      : null,
+    empleadoRol: row.empleado_rol || null,
   };
 };
 
 module.exports = {
   getAllCupones,
   getSucursales,
+  getEmpleados,
   createCupon,
   updateCupon,
   deleteCupon,

@@ -1,3 +1,4 @@
+// src/controllers/cuponesController.js
 const cuponesService = require("../services/cuponesService");
 
 // ============================================
@@ -33,6 +34,22 @@ const getSucursales = async (req, res) => {
 };
 
 // ============================================
+// GET EMPLEADOS (nuevo)
+// ============================================
+const getEmpleados = async (req, res) => {
+  try {
+    const empleados = await cuponesService.getEmpleados();
+    res.json(empleados);
+  } catch (error) {
+    console.error("Error en getEmpleados:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Error interno del servidor",
+    });
+  }
+};
+
+// ============================================
 // CREATE CUPON
 // ============================================
 const createCupon = async (req, res) => {
@@ -47,9 +64,9 @@ const createCupon = async (req, res) => {
       usosMaximos,
       aplicableA,
       sucursalesIds,
+      empleadoId,
     } = req.body;
 
-    // Validaciones
     if (!codigo || !tipo || !valor || !fechaExpiracion) {
       return res.status(400).json({
         success: false,
@@ -93,10 +110,12 @@ const createCupon = async (req, res) => {
       fechaInicio,
       fechaExpiracion,
       usosMaximos,
-      aplicableA: aplicableA && aplicableA.length > 0
-        ? aplicableA
-        : ["servicios", "productos"],
+      aplicableA:
+        aplicableA && aplicableA.length > 0
+          ? aplicableA
+          : ["servicios", "productos"],
       sucursalesIds,
+      empleadoId: empleadoId || null,
     });
 
     res.status(201).json(newCupon);
@@ -135,6 +154,7 @@ const updateCupon = async (req, res) => {
       usosMaximos,
       aplicableA,
       sucursalesIds,
+      empleadoId,
     } = req.body;
 
     if (!codigo || !tipo || !valor || !fechaExpiracion) {
@@ -180,10 +200,12 @@ const updateCupon = async (req, res) => {
       fechaInicio,
       fechaExpiracion,
       usosMaximos,
-      aplicableA: aplicableA && aplicableA.length > 0
-        ? aplicableA
-        : ["servicios", "productos"],
+      aplicableA:
+        aplicableA && aplicableA.length > 0
+          ? aplicableA
+          : ["servicios", "productos"],
       sucursalesIds,
+      empleadoId: empleadoId || null,
     });
 
     res.json(updatedCupon);
@@ -207,7 +229,7 @@ const updateCupon = async (req, res) => {
 };
 
 // ============================================
-// DELETE CUPON (soft delete)
+// DELETE CUPON
 // ============================================
 const deleteCupon = async (req, res) => {
   try {
@@ -243,6 +265,7 @@ const toggleCuponStatus = async (req, res) => {
 module.exports = {
   getCupones,
   getSucursales,
+  getEmpleados,
   createCupon,
   updateCupon,
   deleteCupon,

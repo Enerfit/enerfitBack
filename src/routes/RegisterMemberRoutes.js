@@ -1,0 +1,37 @@
+const express = require("express");
+const router = express.Router();
+const RegisterMemberController = require("../controllers/RegisterMemberController");
+
+// Obtener servicios por sucursal
+router.get("/services/sucursal/:sucursalId", RegisterMemberController.getServicesByBranch);
+
+// Buscar personas
+router.get("/people/search", RegisterMemberController.searchPeople);
+
+// Obtener suscripciones activas de una persona
+router.get("/subscriptions/active/:personaId", RegisterMemberController.getActiveSubscriptions);
+
+// Verificar estado de caja
+router.get("/cash-register/status/:cajaId", RegisterMemberController.getCashRegisterStatus);
+
+// Validar cupón para servicios
+router.get("/coupons/validate", RegisterMemberController.validateCoupon);
+
+// Listar cupones disponibles para la sucursal
+router.get("/coupons/available/:sucursalId", RegisterMemberController.getAvailableCoupons);
+
+// Registrar nueva inscripción
+router.post("/subscriptions/register", RegisterMemberController.registerMember);
+
+// Obtener pagos pendientes de una persona
+router.get("/pagos-pendientes/:personaId", RegisterMemberController.getPagosPendientes);
+
+// Actualizar pago pendiente
+router.put("/pagos-pendientes/:pagoId", RegisterMemberController.updatePagoPendiente);
+// Verificar si una persona tiene huella registrada
+router.get("/people/:personaId/has-fingerprint", RegisterMemberController.hasFingerprint);
+// Crear persona rápidamente (sin inscripción)
+router.post("/people", RegisterMemberController.createPersonQuick);
+
+
+module.exports = router; 

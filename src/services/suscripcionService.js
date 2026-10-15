@@ -3,9 +3,10 @@ const { query } = require("../../db");
 
 const verificarEstadoSuscripcion = async () => {
   try {
-    // La tabla Suscripcion solo tiene la columna "Pagado"
+    // ⚠️ Según el schema.sql la tabla se llama "suscripcion" (minúscula)
+    // y la columna "pagado" (minúscula). Sin comillas dobles.
     const result = await query(
-      `SELECT "Pagado" FROM public."Suscripcion" LIMIT 1`,
+      `SELECT pagado FROM public.suscripcion LIMIT 1`
     );
 
     // Si no hay registros, consideramos que no está pagado
@@ -13,39 +14,31 @@ const verificarEstadoSuscripcion = async () => {
       return false;
     }
 
-    // PostgreSQL puede retornar en minúsculas, probemos ambos
-    const primeraFila = result.rows[0];
-    const valorPagado =
-      primeraFila.Pagado !== undefined
-        ? primeraFila.Pagado
-        : primeraFila.pagado;
+    const valorPagado = result.rows[0].pagado;
 
     // Si es undefined o null, retornar false
     if (valorPagado === undefined || valorPagado === null) {
       return false;
     }
 
-    // Si ya es booleano
+    // Si ya es booleano (lo normal en PostgreSQL BOOLEAN)
     if (typeof valorPagado === "boolean") {
       return valorPagado;
     }
 
-    // Si es número
+    // Fallbacks por si acaso
     if (typeof valorPagado === "number") {
       return valorPagado === 1;
     }
 
-    // Si es string
     if (typeof valorPagado === "string") {
-      const valorLower = valorPagado.toLowerCase().trim();
-      return valorLower === "true" || valorLower === "1" || valorLower === "t";
+      const v = valorPagado.toLowerCase().trim();
+      return v === "true" || v === "1" || v === "t";
     }
 
-    // Por defecto
     return false;
   } catch (error) {
     console.error("Error en verificarEstadoSuscripcion:", error);
-    // PROPAGAMOS el error para que el controlador pueda manejarlo
     throw error;
   }
 };

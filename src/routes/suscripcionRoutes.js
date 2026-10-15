@@ -1,4 +1,4 @@
-// routes/suscripcionRoutes.js
+// src/routes/suscripcionRoutes.js
 const express = require("express");
 const router = express.Router();
 const suscripcionController = require("../controllers/suscripcionController");

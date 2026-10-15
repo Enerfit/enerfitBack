@@ -11,7 +11,7 @@ const getEstadoSuscripcion = async (req, res) => {
   } catch (error) {
     console.error("Error en getEstadoSuscripcion:", error);
 
-    // Verificar si es error de conexión a la base de datos
+    // Error de conexión a la base de datos
     if (
       error.code === "ETIMEDOUT" ||
       error.code === "ECONNREFUSED" ||
@@ -27,10 +27,13 @@ const getEstadoSuscripcion = async (req, res) => {
       });
     }
 
-    // Para otros errores, devolver 500
+    // Para otros errores, devolver 500 con el mensaje real
     res.status(500).json({
       error: "Error al verificar estado de suscripción",
       message: error.message,
+      code: error.code,
+      detail: error.detail,
+      hint: error.hint,
     });
   }
 };

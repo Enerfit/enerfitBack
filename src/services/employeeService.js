@@ -16,18 +16,15 @@ exports.getBranches = async () => {
 // CAJAS
 // ============================================
 exports.getBoxes = async () => {
-  // ⚠️ La tabla `cajas` NO tiene columna `estado`.
-  //    Tiene `estado_caja` ('abierta' | 'cerrada').
   const result = await query(
     "SELECT id, nombre, sucursal_id, estado_caja FROM cajas ORDER BY nombre"
   );
 
-  // Mapeamos al formato que espera el frontend (estado numérico)
   return result.rows.map((row) => ({
     id: row.id,
     nombre: row.nombre,
     sucursal_id: row.sucursal_id,
-    estado: 1, // 1 = disponible para asignar (el frontend filtra por estado === 1)
+    estado: 1,
     estado_caja: row.estado_caja,
   }));
 };

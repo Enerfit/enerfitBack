@@ -291,6 +291,7 @@ const getServiciosDisponibles = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
 // ============================================
 // REPORTE DE EMPLEADOS
 // ============================================
@@ -358,21 +359,6 @@ const actualizarSueldoEmpleado = async (req, res) => {
   }
 };
 
-const getReportesZumba = async (req, res) => {
-  try {
-    const { mes, instructorId } = req.query;
-
-    if (!mes) {
-      return res.status(400).json({ error: "El mes es obligatorio (YYYY-MM)" });
-    }
-
-    const reportes = await reportsService.obtenerReportesZumba(mes, instructorId);
-    res.json(reportes);
-  } catch (error) {
-    console.error("Error en getReportesZumba:", error);
-    res.status(500).json({ error: error.message });
-  }
-};
 // ============================================
 // MOVIMIENTOS DE FECHAS DE INSCRIPCIÓN
 // ============================================
@@ -396,6 +382,7 @@ const getMovimientosFechasInscripcion = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
 module.exports = {
   getReportes,
   getSucursales,
@@ -409,7 +396,7 @@ module.exports = {
   getDesgloseProductos,
   getDesgloseServicios,
   getMovimientosStock,
-  getMovimientosFechasInscripcion, 
+  getMovimientosFechasInscripcion,
   getInscripcionesAgrupadas,
   getProductosDisponibles,
   getServiciosDisponibles,
@@ -417,5 +404,4 @@ module.exports = {
   getAtrasosEmpleados,
   getPagosInformativos,
   actualizarSueldoEmpleado,
-  getReportesZumba,
 };

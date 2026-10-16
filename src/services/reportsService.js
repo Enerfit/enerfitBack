@@ -1259,6 +1259,7 @@ const obtenerServiciosDisponibles = async () => {
     throw error;
   }
 };
+
 // ============================================
 // REPORTE DE EMPLEADOS
 // ============================================
@@ -1309,7 +1310,7 @@ const obtenerEmpleadosReporte = async (sucursalId = null) => {
       sucursalNombres: row.sucursalNombre ? [row.sucursalNombre] : [],
       sueldoBase: parseFloat(row.sueldoBase) || 0,
       comision: parseFloat(row.comision) || 0,
-      tipo: row.rol === "zumba" ? "zumba" : "normal",
+      tipo: "normal",
       tieneHuella: row.tieneHuella,
       activo: row.estado === 1,
     }));
@@ -1336,8 +1337,6 @@ const obtenerAtrasosEmpleados = async (mes, sucursalId = null) => {
       ultimoDia
     ).padStart(2, "0")} 23:59:59`;
 
-    // 🔧 FIX: solo traer registros que sean ATRASOS reales o "Sin Marcar".
-    // Excluye "A tiempo", entradas/salidas a hora correcta, etc.
     let whereClause = `
       WHERE ra.fecha BETWEEN $1 AND $2
       AND ra.tipo_persona = 'empleado'
@@ -1399,7 +1398,6 @@ const obtenerAtrasosEmpleados = async (mes, sucursalId = null) => {
 
       const detalle = row.detalle || "";
 
-      // Clasificar el tipo
       let tipo = "Entrada";
       if (detalle.startsWith("Salida")) {
         tipo = detalle.includes("Sin Marcar") ? "Sin Marcar" : "Salida";
@@ -1428,108 +1426,6 @@ const obtenerAtrasosEmpleados = async (mes, sucursalId = null) => {
     return Object.values(agrupado);
   } catch (error) {
     console.error("Error obteniendo atrasos empleados:", error);
-    throw error;
-  }
-};
-
-// ============================================
-// ZUMBA: Totales agrupados por instructor
-// ============================================
-const obtenerReportesZumbaAgrupados = async (mes, instructorId = null) => {
-  try {
-    const [year, month] = mes.split("-").map(Number);
-    const primerDia = `${year}-${String(month).padStart(2, "0")}-01`;
-    const ultimoDiaNum = new Date(year, month, 0).getDate();
-    const ultimoDia = `${year}-${String(month).padStart(2, "0")}-${String(
-      ultimoDiaNum
-    ).padStart(2, "0")}`;
-
-    let whereClause = "WHERE rz.fecha BETWEEN $1 AND $2";
-    const params = [primerDia, ultimoDia];
-    let paramCount = 2;
-
-    if (instructorId) {
-      paramCount++;
-      whereClause += ` AND rz.instructor_id = $${paramCount}`;
-      params.push(instructorId);
-    }
-
-    const result = await query(
-      `
-      SELECT 
-        rz.instructor_id::text as "instructorId",
-        CONCAT(p.nombres, ' ', p.apellidos) as "instructorNombre",
-        COUNT(*) as "totalDias",
-        COALESCE(SUM(rz.numero_personas), 0) as "totalPersonas"
-      FROM reportes_zumba rz
-      INNER JOIN empleados e ON rz.instructor_id = e.id
-      INNER JOIN personas p ON e.persona_id = p.id
-      ${whereClause}
-      GROUP BY rz.instructor_id, p.nombres, p.apellidos
-      `,
-      params
-    );
-
-    return result.rows.map((row) => ({
-      instructorId: row.instructorId,
-      instructorNombre: row.instructorNombre,
-      totalDias: parseInt(row.totalDias) || 0,
-      totalPersonas: parseInt(row.totalPersonas) || 0,
-    }));
-  } catch (error) {
-    console.error("Error obteniendo reportes zumba agrupados:", error);
-    throw error;
-  }
-};
-
-// ============================================
-// ZUMBA: Lista detallada de reportes
-// ============================================
-const obtenerReportesZumba = async (mes, instructorId = null) => {
-  try {
-    const [year, month] = mes.split("-").map(Number);
-    const primerDia = `${year}-${String(month).padStart(2, "0")}-01`;
-    const ultimoDiaNum = new Date(year, month, 0).getDate();
-    const ultimoDia = `${year}-${String(month).padStart(2, "0")}-${String(
-      ultimoDiaNum
-    ).padStart(2, "0")}`;
-
-    let whereClause = "WHERE rz.fecha BETWEEN $1 AND $2";
-    const params = [primerDia, ultimoDia];
-    let paramCount = 2;
-
-    if (instructorId) {
-      paramCount++;
-      whereClause += ` AND rz.instructor_id = $${paramCount}`;
-      params.push(instructorId);
-    }
-
-    const result = await query(
-      `
-      SELECT 
-        rz.id::text as id,
-        rz.fecha,
-        rz.instructor_id::text as "instructorId",
-        CONCAT(p.nombres, ' ', p.apellidos) as "instructorNombre",
-        rz.numero_personas as "numeroPersonas"
-      FROM reportes_zumba rz
-      INNER JOIN empleados e ON rz.instructor_id = e.id
-      INNER JOIN personas p ON e.persona_id = p.id
-      ${whereClause}
-      ORDER BY rz.fecha DESC
-      `,
-      params
-    );
-
-    return result.rows.map((row) => ({
-      id: row.id,
-      fecha: row.fecha,
-      instructorId: row.instructorId,
-      instructorNombre: row.instructorNombre,
-      numeroPersonas: parseInt(row.numeroPersonas) || 0,
-    }));
-  } catch (error) {
-    console.error("Error obteniendo reportes zumba:", error);
     throw error;
   }
 };
@@ -1565,51 +1461,17 @@ const obtenerPagosInformativos = async (mes, sucursalId = null) => {
       params
     );
 
-    const zumbaTotales = await obtenerReportesZumbaAgrupados(mes);
-    const zumbaMap = {};
-    zumbaTotales.forEach((z) => {
-      zumbaMap[z.instructorId] = z;
-    });
-
     return empleadosResult.rows.map((emp) => {
-      const esZumba = emp.rol === "zumba";
+      const sueldoBase = parseFloat(emp.sueldo_base) || 0;
 
-      if (esZumba) {
-        const zumbaData = zumbaMap[emp.id] || {
-          totalDias: 0,
-          totalPersonas: 0,
-        };
-        const totalPersonas = zumbaData.totalPersonas;
-        const diasRegistrados = zumbaData.totalDias;
-
-        const valorComision = parseFloat(emp.comision) || 50;
-        const promedioPersonas =
-          diasRegistrados > 0 ? totalPersonas / diasRegistrados : 0;
-        const comision = promedioPersonas * valorComision;
-
-        return {
-          empleadoId: emp.id,
-          empleadoNombre: emp.nombre,
-          tipo: "zumba",
-          sueldoBase: 0,
-          comision,
-          sueldoNeto: comision,
-          totalPersonas,
-          diasRegistrados,
-          valorComision,
-        };
-      } else {
-        const sueldoBase = parseFloat(emp.sueldo_base) || 0;
-
-        return {
-          empleadoId: emp.id,
-          empleadoNombre: emp.nombre,
-          tipo: "normal",
-          sueldoBase,
-          comision: 0,
-          sueldoNeto: sueldoBase,
-        };
-      }
+      return {
+        empleadoId: emp.id,
+        empleadoNombre: emp.nombre,
+        tipo: "normal",
+        sueldoBase,
+        comision: 0,
+        sueldoNeto: sueldoBase,
+      };
     });
   } catch (error) {
     console.error("Error obteniendo pagos informativos:", error);
@@ -1750,5 +1612,4 @@ module.exports = {
   obtenerAtrasosEmpleados,
   obtenerPagosInformativos,
   actualizarSueldoEmpleado,
-  obtenerReportesZumba,
 };

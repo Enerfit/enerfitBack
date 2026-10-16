@@ -44,6 +44,7 @@ router.get("/inscripciones-agrupadas", reportsController.getInscripcionesAgrupad
 // ============================================
 router.get("/productos-disponibles", reportsController.getProductosDisponibles);
 router.get("/servicios-disponibles", reportsController.getServiciosDisponibles);
+
 // ============================================
 // REPORTE DE EMPLEADOS
 // ============================================
@@ -51,9 +52,10 @@ router.get("/empleados", reportsController.getEmpleadosReporte);
 router.get("/atrasos-empleados", reportsController.getAtrasosEmpleados);
 router.get("/pagos-informativos", reportsController.getPagosInformativos);
 router.patch("/empleados/:id/sueldo", reportsController.actualizarSueldoEmpleado);
-router.get("/zumba", reportsController.getReportesZumba);
+
 // ============================================
 // MOVIMIENTOS DE FECHAS DE INSCRIPCIÓN
 // ============================================
 router.get("/movimientos-fechas-inscripcion", reportsController.getMovimientosFechasInscripcion);
-module.exports = router; 
+
+module.exports = router;

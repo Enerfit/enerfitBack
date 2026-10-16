@@ -9,11 +9,8 @@ const app = express();
 
 const allowedOrigins = [
   "http://localhost:8080",
-  "https://mutantgym.netlify.app",
-  "mutantgym.spiderlabsystems.com",
-  "https://mutant-back.onrender.com",
-  "https://gym-back-zbsh.onrender.com",
-  "https://spiderlabsgym.netlify.app",
+  "https://enerfitback.onrender.com",
+  "https://enerfit.spiderlabsystems.com",
 ];
 
 // Opciones de configuración CORS

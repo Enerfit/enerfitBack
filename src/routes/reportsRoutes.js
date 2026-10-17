@@ -40,6 +40,14 @@ router.get("/movimientos-stock", reportsController.getMovimientosStock);
 router.get("/inscripciones-agrupadas", reportsController.getInscripcionesAgrupadas);
 
 // ============================================
+// INSCRIPCIONES NUEVAS VS REINSCRIPCIONES
+// ============================================
+router.get(
+  "/inscripciones-nuevas-vs-reinscritas",
+  reportsController.getInscripcionesNuevasVsReinscritas
+);
+
+// ============================================
 // LISTAS PARA FILTROS
 // ============================================
 router.get("/productos-disponibles", reportsController.getProductosDisponibles);

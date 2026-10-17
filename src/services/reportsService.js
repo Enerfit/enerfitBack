@@ -1322,11 +1322,6 @@ const obtenerEmpleadosReporte = async (sucursalId = null) => {
 
 // ============================================
 // ATRASOS: Detalle individual por registro
-// SOLO trae:
-//   - Entradas con "tarde"
-//   - Salidas con "antes"
-//   - Salidas "Sin Marcar"
-// (Excluye "A tiempo" y horas normales)
 // ============================================
 const obtenerAtrasosEmpleados = async (mes, sucursalId = null) => {
   try {
@@ -1589,6 +1584,164 @@ const obtenerMovimientosFechasInscripcion = async (
 };
 
 // ============================================
+// INSCRIPCIONES NUEVAS VS REINSCRIPCIONES (por mes)
+// ============================================
+const obtenerInscripcionesNuevasVsReinscritas = async (
+  mes,
+  sucursalId = null,
+  cuponId = null
+) => {
+  try {
+    // mes formato "YYYY-MM"
+    const [year, month] = mes.split("-").map(Number);
+    const fechaInicio = `${year}-${String(month).padStart(2, "0")}-01 00:00:00`;
+    const ultimoDia = new Date(year, month, 0).getDate();
+    const fechaFin = `${year}-${String(month).padStart(2, "0")}-${String(
+      ultimoDia
+    ).padStart(2, "0")} 23:59:59`;
+
+    let whereClause = "WHERE vs.fecha BETWEEN $1 AND $2";
+    const params = [fechaInicio, fechaFin];
+    let paramCount = 2;
+
+    if (sucursalId && sucursalId !== "all") {
+      paramCount++;
+      whereClause += ` AND vs.sucursal_id = $${paramCount}`;
+      params.push(sucursalId);
+    }
+
+    let cuponFilter = "";
+    if (cuponId && cuponId !== "all") {
+      if (cuponId === "con-cupon") {
+        cuponFilter = ` AND vs.cupon_id IS NOT NULL`;
+      } else if (cuponId === "sin-cupon") {
+        cuponFilter = ` AND vs.cupon_id IS NULL`;
+      } else {
+        paramCount++;
+        cuponFilter = ` AND vs.cupon_id = $${paramCount}`;
+        params.push(cuponId);
+      }
+    }
+
+    // ⭐ LÓGICA CORREGIDA:
+    // Una inscripción es REINSCRIPCIÓN si existe OTRA inscripción de la misma
+    // persona en el mismo servicio cuyo id sea MENOR (más antigua por creación),
+    // sin importar las fechas. Así detectamos correctamente cuando se vence
+    // un mes y se vuelve a inscribir, aunque la fecha_inicio nueva sea anterior
+    // o igual a la anterior por ajustes manuales.
+    //
+    // Además excluimos inscripciones eliminadas (estado = 2) del conteo de previas.
+    const sql = `
+      WITH ventas_mes AS (
+        SELECT
+          vs.id AS venta_id,
+          vs.persona_id,
+          vs.sucursal_id,
+          vs.cupon_id,
+          vs.fecha,
+          c.codigo AS cupon_codigo,
+          dvs.inscripcion_id,
+          i.servicio_id,
+          i.fecha_inicio AS inscripcion_fecha_inicio
+        FROM ventas_servicios vs
+        INNER JOIN detalle_venta_servicios dvs ON dvs.venta_servicio_id = vs.id
+        INNER JOIN inscripciones i ON i.id = dvs.inscripcion_id
+        LEFT JOIN cupones c ON c.id = vs.cupon_id
+        ${whereClause}
+        ${cuponFilter}
+      ),
+      clasificacion AS (
+        SELECT
+          vm.*,
+          EXISTS (
+            SELECT 1
+            FROM inscripciones i_prev
+            WHERE i_prev.persona_id = vm.persona_id
+              AND i_prev.servicio_id = vm.servicio_id
+              AND i_prev.id < vm.inscripcion_id
+              AND i_prev.estado IN (0, 1)
+          ) AS es_reinscripcion
+        FROM ventas_mes vm
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE NOT es_reinscripcion) AS nuevas,
+        COUNT(*) FILTER (WHERE es_reinscripcion)     AS reinscripciones,
+        COUNT(*) FILTER (WHERE NOT es_reinscripcion AND cupon_id IS NOT NULL) AS nuevas_con_cupon,
+        COUNT(*) FILTER (WHERE es_reinscripcion AND cupon_id IS NOT NULL)     AS reinscripciones_con_cupon,
+        COUNT(*) FILTER (WHERE NOT es_reinscripcion AND cupon_id IS NULL)     AS nuevas_sin_cupon,
+        COUNT(*) FILTER (WHERE es_reinscripcion AND cupon_id IS NULL)         AS reinscripciones_sin_cupon,
+        COUNT(*) AS total
+      FROM clasificacion
+    `;
+
+    const result = await query(sql, params);
+
+    const sqlPorCupon = `
+      WITH ventas_mes AS (
+        SELECT
+          vs.id AS venta_id,
+          vs.persona_id,
+          vs.cupon_id,
+          c.codigo AS cupon_codigo,
+          dvs.inscripcion_id,
+          i.servicio_id,
+          i.fecha_inicio AS inscripcion_fecha_inicio
+        FROM ventas_servicios vs
+        INNER JOIN detalle_venta_servicios dvs ON dvs.venta_servicio_id = vs.id
+        INNER JOIN inscripciones i ON i.id = dvs.inscripcion_id
+        LEFT JOIN cupones c ON c.id = vs.cupon_id
+        ${whereClause}
+        ${cuponFilter}
+      ),
+      clasificacion AS (
+        SELECT
+          vm.*,
+          EXISTS (
+            SELECT 1
+            FROM inscripciones i_prev
+            WHERE i_prev.persona_id = vm.persona_id
+              AND i_prev.servicio_id = vm.servicio_id
+              AND i_prev.id < vm.inscripcion_id
+              AND i_prev.estado IN (0, 1)
+          ) AS es_reinscripcion
+        FROM ventas_mes vm
+      )
+      SELECT
+        COALESCE(cupon_codigo, 'Sin cupón') AS cupon,
+        COUNT(*) FILTER (WHERE NOT es_reinscripcion) AS nuevas,
+        COUNT(*) FILTER (WHERE es_reinscripcion)     AS reinscripciones,
+        COUNT(*) AS total
+      FROM clasificacion
+      GROUP BY cupon_codigo
+      ORDER BY total DESC
+    `;
+
+    const resultPorCupon = await query(sqlPorCupon, params);
+
+    return {
+      resumen: {
+        nuevas: parseInt(result.rows[0]?.nuevas) || 0,
+        reinscripciones: parseInt(result.rows[0]?.reinscripciones) || 0,
+        nuevasConCupon: parseInt(result.rows[0]?.nuevas_con_cupon) || 0,
+        reinscripcionesConCupon: parseInt(result.rows[0]?.reinscripciones_con_cupon) || 0,
+        nuevasSinCupon: parseInt(result.rows[0]?.nuevas_sin_cupon) || 0,
+        reinscripcionesSinCupon: parseInt(result.rows[0]?.reinscripciones_sin_cupon) || 0,
+        total: parseInt(result.rows[0]?.total) || 0,
+      },
+      porCupon: resultPorCupon.rows.map((r) => ({
+        cupon: r.cupon,
+        nuevas: parseInt(r.nuevas) || 0,
+        reinscripciones: parseInt(r.reinscripciones) || 0,
+        total: parseInt(r.total) || 0,
+      })),
+    };
+  } catch (error) {
+    console.error("Error obteniendo inscripciones nuevas vs reinscritas:", error);
+    throw error;
+  }
+};
+
+// ============================================
 // EXPORTS
 // ============================================
 module.exports = {
@@ -1612,4 +1765,5 @@ module.exports = {
   obtenerAtrasosEmpleados,
   obtenerPagosInformativos,
   actualizarSueldoEmpleado,
+  obtenerInscripcionesNuevasVsReinscritas,
 };

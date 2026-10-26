@@ -383,31 +383,6 @@ const getMovimientosFechasInscripcion = async (req, res) => {
   }
 };
 
-// ============================================
-// INSCRIPCIONES NUEVAS VS REINSCRIPCIONES
-// ============================================
-const getInscripcionesNuevasVsReinscritas = async (req, res) => {
-  try {
-    const { mes, sucursalId, cuponId } = req.query;
-
-    if (!mes) {
-      return res.status(400).json({
-        error: "El mes es obligatorio (formato YYYY-MM)",
-      });
-    }
-
-    const data = await reportsService.obtenerInscripcionesNuevasVsReinscritas(
-      mes,
-      sucursalId === "all" ? null : sucursalId,
-      cuponId || null
-    );
-    res.json(data);
-  } catch (error) {
-    console.error("Error en getInscripcionesNuevasVsReinscritas:", error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
 module.exports = {
   getReportes,
   getSucursales,
@@ -429,5 +404,4 @@ module.exports = {
   getAtrasosEmpleados,
   getPagosInformativos,
   actualizarSueldoEmpleado,
-  getInscripcionesNuevasVsReinscritas,
 };

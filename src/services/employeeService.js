@@ -379,22 +379,120 @@ exports.toggleEmployeeStatus = async (id) => {
 // ============================================
 // REGISTER FINGERPRINT
 // ============================================
+// Este método recibe `id` y trata de resolverlo con seguridad:
+//   1) Primero intenta interpretarlo como `empleados.id`
+//   2) Si no existe, intenta interpretarlo como `personas.id`
+//   3) Si tampoco existe, lanza un error explícito
+// Así evitamos que un persona_id "choque" con otro empleado_id y
+// se actualice la huella de la persona equivocada.
+// ============================================
 exports.registerFingerprint = async (id) => {
-  const empleadoResult = await query(
-    "SELECT persona_id FROM empleados WHERE id = $1",
-    [id]
-  );
+  const numericId = Number(id);
 
-  if (empleadoResult.rows.length === 0) {
-    throw new Error("Empleado no encontrado");
+  if (Number.isNaN(numericId) || numericId <= 0) {
+    throw new Error(`ID inválido para registrar huella: ${id}`);
   }
 
-  const personaId = empleadoResult.rows[0].persona_id;
+  // 1) ¿Existe como empleado_id?
+  const asEmpleado = await query(
+    "SELECT id, persona_id FROM empleados WHERE id = $1 AND estado IN (0, 1, 2)",
+    [numericId]
+  );
 
+  if (asEmpleado.rows.length > 0) {
+    const personaId = asEmpleado.rows[0].persona_id;
+    console.log(
+      `🟢 Huella: input id=${numericId} → interpretado como empleado_id → persona_id=${personaId}`
+    );
+    await query(
+      "UPDATE personas SET huella_digital = $1 WHERE id = $2",
+      [Buffer.from("simulated_fingerprint_data"), personaId]
+    );
+    return {
+      personaId,
+      resolvedAs: "empleado_id",
+      empleadoId: asEmpleado.rows[0].id,
+    };
+  }
+
+  // 2) ¿Existe como persona_id?
+  const asPersona = await query(
+    "SELECT id, nombres, apellidos FROM personas WHERE id = $1 AND estado IN (0, 1)",
+    [numericId]
+  );
+
+  if (asPersona.rows.length > 0) {
+    console.log(
+      `🟢 Huella: input id=${numericId} → interpretado como persona_id (${asPersona.rows[0].nombres} ${asPersona.rows[0].apellidos})`
+    );
+    await query(
+      "UPDATE personas SET huella_digital = $1 WHERE id = $2",
+      [Buffer.from("simulated_fingerprint_data"), numericId]
+    );
+    return {
+      personaId: numericId,
+      resolvedAs: "persona_id",
+      empleadoId: null,
+    };
+  }
+
+  // 3) No existe en ninguna
+  throw new Error(
+    `No se encontró empleado ni persona con id=${numericId}. No se registró la huella.`
+  );
+};
+
+// ============================================
+// REGISTER FINGERPRINT BY PERSONA ID (explícito, sin ambigüedad)
+// ============================================
+// Este endpoint recibe directamente el `persona_id`, que es el único
+// que `personas.huella_digital` conoce. Cero ambigüedad.
+// ============================================
+exports.registerFingerprintByPersonaId = async (personaId) => {
+  const numericId = Number(personaId);
+
+  if (Number.isNaN(numericId) || numericId <= 0) {
+    throw new Error(`persona_id inválido: ${personaId}`);
+  }
+
+  // 1) Validar que la persona existe
+  const personaResult = await query(
+    "SELECT id, nombres, apellidos FROM personas WHERE id = $1 AND estado IN (0, 1)",
+    [numericId]
+  );
+
+  if (personaResult.rows.length === 0) {
+    throw new Error(`Persona no encontrada o inactiva (persona_id=${numericId})`);
+  }
+
+  const persona = personaResult.rows[0];
+
+  // 2) Actualizar huella
   await query(
     "UPDATE personas SET huella_digital = $1 WHERE id = $2",
-    [Buffer.from("simulated_fingerprint_data"), personaId]
+    [Buffer.from("simulated_fingerprint_data"), numericId]
   );
+
+  // 3) Información complementaria (opcional)
+  const empleadoResult = await query(
+    "SELECT id FROM empleados WHERE persona_id = $1 AND estado = 1",
+    [numericId]
+  );
+
+  console.log(
+    `🟢 Huella registrada por persona_id=${numericId} (${persona.nombres} ${persona.apellidos})` +
+      (empleadoResult.rows.length > 0
+        ? ` → empleado_id=${empleadoResult.rows[0].id}`
+        : " (sin empleado activo)")
+  );
+
+  return {
+    persona_id: numericId,
+    nombres: persona.nombres,
+    apellidos: persona.apellidos,
+    empleado_id:
+      empleadoResult.rows.length > 0 ? empleadoResult.rows[0].id : null,
+  };
 };
 
 // ============================================

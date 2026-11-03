@@ -1,3 +1,4 @@
+// backend/src/middleware/loginmiddleware.js
 const jwt = require("jsonwebtoken");
 const db = require("../../db");
 
@@ -35,7 +36,10 @@ const authenticate = async (req, res, next) => {
     // 4. Verificar y decodificar el token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    if (!decoded || !decoded.id) {
+    // ✅ CAMBIO: aceptar tanto "id" como "idusuario" (compatibilidad)
+    const userId = decoded?.id || decoded?.idusuario;
+
+    if (!decoded || !userId) {
       return res.status(401).json({
         success: false,
         message: "Invalid token payload",
@@ -44,8 +48,8 @@ const authenticate = async (req, res, next) => {
 
     // 5. Verificar si es usuario empleado o cliente
     let user = null;
-    let userType = 'empleado';
-    
+    let userType = "empleado";
+
     // Primero buscar en usuarios (empleados)
     const userQuery = `
       SELECT 
@@ -67,12 +71,12 @@ const authenticate = async (req, res, next) => {
       LEFT JOIN sucursales s ON e.sucursal_id = s.id
       WHERE u.id = $1 AND e.estado = 1
     `;
-    
-    const userResult = await db.query(userQuery, [decoded.id]);
-    
+
+    const userResult = await db.query(userQuery, [userId]);
+
     if (userResult.rows.length === 0) {
       // Si no es empleado, buscar en usuarios_clientes
-      userType = 'cliente';
+      userType = "cliente";
       const clientQuery = `
         SELECT 
           uc.id as idusuario,
@@ -81,19 +85,19 @@ const authenticate = async (req, res, next) => {
         FROM usuarios_clientes uc
         WHERE uc.id = $1
       `;
-      
-      const clientResult = await db.query(clientQuery, [decoded.id]);
-      
+
+      const clientResult = await db.query(clientQuery, [userId]);
+
       if (clientResult.rows.length === 0) {
         return res.status(401).json({
           success: false,
           message: "User not found",
         });
       }
-      
+
       user = clientResult.rows[0];
-      user.userType = 'cliente';
-      
+      user.userType = "cliente";
+
       // Para clientes, buscar datos de persona basado en el username
       const personaQuery = `
         SELECT 
@@ -104,9 +108,9 @@ const authenticate = async (req, res, next) => {
         WHERE CONCAT(LOWER(p.nombres), '.', LOWER(p.apellidos)) = LOWER($1)
         OR CONCAT(LOWER(SPLIT_PART(p.nombres, ' ', 1)), '.', LOWER(p.apellidos)) = LOWER($1)
       `;
-      
+
       const personaResult = await db.query(personaQuery, [user.username]);
-      
+
       if (personaResult.rows.length > 0) {
         user.idpersona = personaResult.rows[0].idpersona;
         user.nombres = personaResult.rows[0].nombres;
@@ -114,28 +118,33 @@ const authenticate = async (req, res, next) => {
       }
     } else {
       user = userResult.rows[0];
-      user.userType = 'empleado';
-      
-      // OBTENER HORARIOS DESDE LA NUEVA TABLA horarios_empleado PARA EMPLEADOS
-      if (user.rol !== 'admin') {
+      user.userType = "empleado";
+
+      // ✅ CAMBIO: admin NO tiene horarios; el resto de roles SÍ
+      const rolNorm = (user.rol || "").toLowerCase().trim();
+
+      if (rolNorm !== "admin") {
         const horariosQuery = `
           SELECT dia_semana, hora_ingreso, hora_salida 
           FROM horarios_empleado 
           WHERE empleado_id = $1 
           ORDER BY dia_semana
         `;
-        
-        const horariosResult = await db.query(horariosQuery, [user.idempleado]);
+
+        const horariosResult = await db.query(horariosQuery, [
+          user.idempleado,
+        ]);
         user.horarios = horariosResult.rows;
-        
-        // Asignar horario principal (Lunes a Viernes) para compatibilidad
+
+        // Asignar horario principal (Lunes) para compatibilidad con código viejo
         if (user.horarios && user.horarios.length > 0) {
-          const horarioPrincipal = user.horarios.find(h => h.dia_semana === 1) || user.horarios[0];
+          const horarioPrincipal =
+            user.horarios.find((h) => h.dia_semana === 1) || user.horarios[0];
           user.hora_ingreso = horarioPrincipal.hora_ingreso;
           user.hora_salida = horarioPrincipal.hora_salida;
         }
       } else {
-        // Admin no necesita horarios
+        // Admin no tiene horarios
         user.horarios = [];
       }
     }
@@ -163,6 +172,9 @@ const authenticate = async (req, res, next) => {
 };
 
 const authorize = (requiredRoles) => {
+  // ✅ CAMBIO: normalizar roles para evitar falsos negativos por mayúsculas/espacios
+  const normalized = requiredRoles.map((r) => r.toLowerCase().trim());
+
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({
@@ -171,7 +183,9 @@ const authorize = (requiredRoles) => {
       });
     }
 
-    if (!requiredRoles.includes(req.user.rol)) {
+    const userRol = (req.user.rol || "").toLowerCase().trim();
+
+    if (!normalized.includes(userRol)) {
       return res.status(403).json({
         success: false,
         message: "Insufficient permissions",

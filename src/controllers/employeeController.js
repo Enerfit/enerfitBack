@@ -1,3 +1,4 @@
+// backend/controllers/employeeController.js
 const employeeService = require("../services/employeeService");
 
 // ============================================
@@ -15,7 +16,6 @@ function buildErrorResponse(error) {
   });
 
   if (error.code === "23503") {
-    // Foreign key violation
     return {
       status: 400,
       message: `No se puede modificar el empleado porque tiene registros asociados (${error.table || "otra tabla"}). Intenta solo desactivarlo en lugar de cambiar su rol.`,
@@ -23,7 +23,6 @@ function buildErrorResponse(error) {
   }
 
   if (error.code === "23505") {
-    // Unique violation
     if (error.constraint === "personas_ci_key") {
       return { status: 400, message: "ci_unique" };
     }
@@ -141,13 +140,15 @@ exports.createEmployee = async (req, res) => {
       }
     }
 
-    // Validaciones para roles que requieren sucursal
-    if (employeeData.cargo !== "admin") {
-      if (!employeeData.sucursal_id) {
-        return res
-          .status(400)
-          .json({ message: "Sucursal es obligatoria para este cargo" });
-      }
+    // ✅ CAMBIO: TODOS los roles requieren sucursal (incluido admin)
+    if (!employeeData.sucursal_id) {
+      return res
+        .status(400)
+        .json({ message: "Sucursal es obligatoria para este cargo" });
+    }
+
+    // ✅ CAMBIO: solo roles SIN horario (admin) no requieren horarios
+    if (!["admin"].includes(employeeData.cargo)) {
       if (!employeeData.horarios || employeeData.horarios.length === 0) {
         return res
           .status(400)
@@ -155,8 +156,11 @@ exports.createEmployee = async (req, res) => {
       }
     }
 
-    // Validar caja solo para recepcionista
-    if (employeeData.cargo === "recepcionista" && !employeeData.caja_id) {
+    // ✅ CAMBIO: admin y recepcionista requieren caja
+    if (
+      ["admin", "recepcionista"].includes(employeeData.cargo) &&
+      !employeeData.caja_id
+    ) {
       return res
         .status(400)
         .json({ message: "Caja es obligatoria para este cargo" });
@@ -195,15 +199,18 @@ exports.updateEmployee = async (req, res) => {
       }
     }
 
-    if (employeeData.cargo !== "admin") {
-      if (!employeeData.sucursal_id) {
-        return res
-          .status(400)
-          .json({ message: "Sucursal es obligatoria para este cargo" });
-      }
+    // ✅ CAMBIO: TODOS los roles requieren sucursal
+    if (!employeeData.sucursal_id) {
+      return res
+        .status(400)
+        .json({ message: "Sucursal es obligatoria para este cargo" });
     }
 
-    if (employeeData.cargo === "recepcionista" && !employeeData.caja_id) {
+    // ✅ CAMBIO: admin y recepcionista requieren caja
+    if (
+      ["admin", "recepcionista"].includes(employeeData.cargo) &&
+      !employeeData.caja_id
+    ) {
       return res
         .status(400)
         .json({ message: "Caja es obligatoria para este cargo" });
@@ -260,7 +267,7 @@ exports.registerFingerprint = async (req, res) => {
 };
 
 // ============================================
-// 🆕 REGISTER FINGERPRINT BY PERSONA ID (explícito, sin ambigüedad)
+// REGISTER FINGERPRINT BY PERSONA ID (explícito, sin ambigüedad)
 // ============================================
 exports.registerFingerprintByPersona = async (req, res) => {
   try {

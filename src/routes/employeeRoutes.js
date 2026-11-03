@@ -1,3 +1,4 @@
+// backend/src/routes/employeeRoutes.js
 const express = require("express");
 const router = express.Router();
 const employeeController = require("../controllers/employeeController");
@@ -13,7 +14,7 @@ router.get("/branches", employeeController.getBranches);
 router.get("/boxes", employeeController.getBoxes);
 
 // ============================================
-// 🆕 HUELLA POR PERSONA_ID (explícito, sin ambigüedad)
+// HUELLA POR PERSONA_ID (explícito, sin ambigüedad)
 // ⚠️ IMPORTANTE: debe ir ANTES de "/:id" para no colisionar.
 // ============================================
 router.post(

@@ -1,4 +1,4 @@
-// src/services/employeeService.js
+// backend/src/services/employeeService.js
 const { query, pool } = require("../../db");
 const bcrypt = require("bcrypt");
 
@@ -114,14 +114,16 @@ exports.createEmployee = async (employeeData) => {
     );
     const personaId = personaResult.rows[0].id;
 
+    // ✅ CAMBIO: TODOS los roles guardan sucursal (incluido admin)
     const empleadoResult = await client.query(
       `INSERT INTO empleados (persona_id, rol, sucursal_id, estado) 
        VALUES ($1, $2, $3, 1) RETURNING id`,
-      [personaId, cargo, cargo === "admin" ? null : sucursal_id]
+      [personaId, cargo, sucursal_id]
     );
     const empleadoId = empleadoResult.rows[0].id;
 
-    if (caja_id && cargo === "recepcionista") {
+    // ✅ CAMBIO: admin y recepcionista guardan caja
+    if (caja_id && ["admin", "recepcionista"].includes(cargo)) {
       await client.query(
         `INSERT INTO empleado_caja (empleado_id, caja_id, estado) 
          VALUES ($1, $2, 1)`,
@@ -129,6 +131,7 @@ exports.createEmployee = async (employeeData) => {
       );
     }
 
+    // ✅ CAMBIO: solo roles que requieren horarios los guardan (admin NO)
     if (cargo !== "admin" && horarios && horarios.length > 0) {
       for (const horario of horarios) {
         if (horario.hora_ingreso && horario.hora_salida) {
@@ -208,12 +211,14 @@ exports.updateEmployee = async (id, employeeData) => {
       [nombres, apellidos, ci, telefono, personaId]
     );
 
+    // ✅ CAMBIO: TODOS los roles guardan sucursal (incluido admin)
     await client.query(
       `UPDATE empleados SET rol = $1, sucursal_id = $2 WHERE id = $3`,
-      [cargo, cargo === "admin" ? null : sucursal_id, id]
+      [cargo, sucursal_id, id]
     );
 
-    if (cargo === "recepcionista" && caja_id) {
+    // ✅ CAMBIO: admin y recepcionista guardan caja
+    if (["admin", "recepcionista"].includes(cargo) && caja_id) {
       const asignacionExistente = await client.query(
         "SELECT id FROM empleado_caja WHERE empleado_id = $1 AND estado = 1",
         [id]
@@ -238,35 +243,29 @@ exports.updateEmployee = async (id, employeeData) => {
       );
     }
 
-    if (cargo !== "admin") {
-      await client.query(
-        "DELETE FROM horarios_empleado WHERE empleado_id = $1",
-        [id]
-      );
+    // ✅ CAMBIO: manejo de horarios según rol (admin NO tiene horarios)
+    await client.query(
+      "DELETE FROM horarios_empleado WHERE empleado_id = $1",
+      [id]
+    );
 
-      if (horarios && horarios.length > 0) {
-        for (const horario of horarios) {
-          if (horario.hora_ingreso && horario.hora_salida) {
-            await client.query(
-              `INSERT INTO horarios_empleado 
-                (empleado_id, dia_semana, hora_ingreso, hora_salida, sucursal_id) 
-               VALUES ($1, $2, $3, $4, $5)`,
-              [
-                id,
-                horario.dia_semana,
-                horario.hora_ingreso,
-                horario.hora_salida,
-                horario.sucursal_id || sucursal_id || null,
-              ]
-            );
-          }
+    if (cargo !== "admin" && horarios && horarios.length > 0) {
+      for (const horario of horarios) {
+        if (horario.hora_ingreso && horario.hora_salida) {
+          await client.query(
+            `INSERT INTO horarios_empleado 
+              (empleado_id, dia_semana, hora_ingreso, hora_salida, sucursal_id) 
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              id,
+              horario.dia_semana,
+              horario.hora_ingreso,
+              horario.hora_salida,
+              horario.sucursal_id || sucursal_id || null,
+            ]
+          );
         }
       }
-    } else {
-      await client.query(
-        "DELETE FROM horarios_empleado WHERE empleado_id = $1",
-        [id]
-      );
     }
 
     if (["admin", "recepcionista"].includes(cargo)) {
@@ -377,14 +376,7 @@ exports.toggleEmployeeStatus = async (id) => {
 };
 
 // ============================================
-// REGISTER FINGERPRINT
-// ============================================
-// Este método recibe `id` y trata de resolverlo con seguridad:
-//   1) Primero intenta interpretarlo como `empleados.id`
-//   2) Si no existe, intenta interpretarlo como `personas.id`
-//   3) Si tampoco existe, lanza un error explícito
-// Así evitamos que un persona_id "choque" con otro empleado_id y
-// se actualice la huella de la persona equivocada.
+// REGISTER FINGERPRINT (compat)
 // ============================================
 exports.registerFingerprint = async (id) => {
   const numericId = Number(id);
@@ -393,7 +385,6 @@ exports.registerFingerprint = async (id) => {
     throw new Error(`ID inválido para registrar huella: ${id}`);
   }
 
-  // 1) ¿Existe como empleado_id?
   const asEmpleado = await query(
     "SELECT id, persona_id FROM empleados WHERE id = $1 AND estado IN (0, 1, 2)",
     [numericId]
@@ -415,7 +406,6 @@ exports.registerFingerprint = async (id) => {
     };
   }
 
-  // 2) ¿Existe como persona_id?
   const asPersona = await query(
     "SELECT id, nombres, apellidos FROM personas WHERE id = $1 AND estado IN (0, 1)",
     [numericId]
@@ -436,17 +426,13 @@ exports.registerFingerprint = async (id) => {
     };
   }
 
-  // 3) No existe en ninguna
   throw new Error(
     `No se encontró empleado ni persona con id=${numericId}. No se registró la huella.`
   );
 };
 
 // ============================================
-// REGISTER FINGERPRINT BY PERSONA ID (explícito, sin ambigüedad)
-// ============================================
-// Este endpoint recibe directamente el `persona_id`, que es el único
-// que `personas.huella_digital` conoce. Cero ambigüedad.
+// REGISTER FINGERPRINT BY PERSONA ID
 // ============================================
 exports.registerFingerprintByPersonaId = async (personaId) => {
   const numericId = Number(personaId);
@@ -455,7 +441,6 @@ exports.registerFingerprintByPersonaId = async (personaId) => {
     throw new Error(`persona_id inválido: ${personaId}`);
   }
 
-  // 1) Validar que la persona existe
   const personaResult = await query(
     "SELECT id, nombres, apellidos FROM personas WHERE id = $1 AND estado IN (0, 1)",
     [numericId]
@@ -467,13 +452,11 @@ exports.registerFingerprintByPersonaId = async (personaId) => {
 
   const persona = personaResult.rows[0];
 
-  // 2) Actualizar huella
   await query(
     "UPDATE personas SET huella_digital = $1 WHERE id = $2",
     [Buffer.from("simulated_fingerprint_data"), numericId]
   );
 
-  // 3) Información complementaria (opcional)
   const empleadoResult = await query(
     "SELECT id FROM empleados WHERE persona_id = $1 AND estado = 1",
     [numericId]

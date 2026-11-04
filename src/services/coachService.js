@@ -192,10 +192,10 @@ exports.createCoach = async (data) => {
 };
 
 // ============================================
-// UPDATE COACH
+// UPDATE COACH (datos personales + meta del mes actual)
 // ============================================
 exports.updateCoach = async (id, data) => {
-  const { nombres, apellidos, ci, telefono, sucursal_id } = data;
+  const { nombres, apellidos, ci, telefono, sucursal_id, metaInscritos } = data;
 
   const client = await pool.connect();
   try {
@@ -220,6 +220,26 @@ exports.updateCoach = async (id, data) => {
       `UPDATE empleados SET sucursal_id = $1 WHERE id = $2`,
       [sucursal_id, id]
     );
+
+    // ✅ Actualizar meta del mes actual si viene
+    if (metaInscritos !== undefined && metaInscritos !== null) {
+      const metaNum = Number(metaInscritos);
+      if (Number.isNaN(metaNum) || metaNum < 0) {
+        throw new Error("La meta de inscritos debe ser un número mayor o igual a 0");
+      }
+
+      const mesActual = new Date().toISOString().slice(0, 7);
+
+      await client.query(
+        `INSERT INTO coach_meta_mes (coach_id, mes, meta_inscritos, adelanto_monto, fecha_actualizacion)
+         VALUES ($1, $2, $3, 0, NOW())
+         ON CONFLICT (coach_id, mes)
+         DO UPDATE SET
+           meta_inscritos = EXCLUDED.meta_inscritos,
+           fecha_actualizacion = NOW()`,
+        [id, mesActual, metaNum]
+      );
+    }
 
     await client.query("COMMIT");
 

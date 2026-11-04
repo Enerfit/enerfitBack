@@ -112,18 +112,28 @@ exports.createCoach = async (req, res) => {
 };
 
 // ============================================
-// UPDATE COACH
+// UPDATE COACH (incluye meta del mes actual)
 // ============================================
 exports.updateCoach = async (req, res) => {
   try {
     const { id } = req.params;
-    const { nombres, apellidos, ci, telefono, sucursal_id } = req.body;
+    const { nombres, apellidos, ci, telefono, sucursal_id, metaInscritos } = req.body;
 
     if (!nombres || !apellidos || !ci || !telefono) {
       return res.status(400).json({ message: "Todos los campos personales son obligatorios" });
     }
     if (!sucursal_id) {
       return res.status(400).json({ message: "Sucursal es obligatoria" });
+    }
+
+    // ✅ Validar meta si viene
+    if (metaInscritos !== undefined && metaInscritos !== null) {
+      const metaNum = Number(metaInscritos);
+      if (Number.isNaN(metaNum) || metaNum < 0) {
+        return res.status(400).json({
+          message: "La meta de inscritos debe ser un número mayor o igual a 0",
+        });
+      }
     }
 
     const coach = await coachService.updateCoach(id, req.body);

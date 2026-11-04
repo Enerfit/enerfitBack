@@ -407,7 +407,7 @@ async function analizarConflictoInscripcion(
 exports.analizarConflictoInscripcion = analizarConflictoInscripcion;
 
 // ============================================
-// REGISTRAR MIEMBRO (MULTI-PERSONA) + COACH
+// REGISTRAR MIEMBRO (MULTI-PERSONA) + COACH (solo referencia)
 // ============================================
 exports.registerMember = async (registrationData) => {
   const client = await pool.connect();
@@ -416,7 +416,7 @@ exports.registerMember = async (registrationData) => {
     await client.query("BEGIN");
 
     // ============================================
-    // 0. Resolver coach (si viene)
+    // 0. Resolver coach (si viene) — solo referencia
     // ============================================
     let coachId = null;
     let coachNombre = null;
@@ -815,9 +815,9 @@ exports.registerMember = async (registrationData) => {
       detallePago += ` | Pago en plazos - Total: ${registrationData.total}, Entregado: ${registrationData.montoEntregado}, Pendiente: ${registrationData.montoPendiente}`;
     }
 
-    // ✅ NUEVO: si se aplica coach, agregar al detalle
+    // ✅ Si se aplica coach, solo se anota como referencia (no afecta montos)
     if (coachId) {
-      detallePago = `Couch ${coachNombre} aplicado (descuento total) | ${detallePago}`;
+      detallePago = `Couch ${coachNombre} | ${detallePago}`;
     }
 
     // ============================================
@@ -828,18 +828,11 @@ exports.registerMember = async (registrationData) => {
     }, 0);
 
     // ============================================
-    // 10. Descuento por coach
+    // 10. Descuento (normal, el coach NO afecta montos)
     // ============================================
-    // Regla: si hay coach, el descuento cubre el total (monto a 0).
-    // El descuento manual/cupón se ignora cuando hay coach.
-    let descuentoFinal = Number(registrationData.descuento || 0);
-    let descripcionDescuentoFinal =
+    const descuentoFinal = Number(registrationData.descuento || 0);
+    const descripcionDescuentoFinal =
       registrationData.descripcionDescuento || null;
-
-    if (coachId) {
-      descuentoFinal = subtotal;
-      descripcionDescuentoFinal = `Couch (${coachNombre}) aplicado`;
-    }
 
     const totalFinal = Math.max(0, subtotal - descuentoFinal);
 
@@ -848,13 +841,10 @@ exports.registerMember = async (registrationData) => {
     // ============================================
     const ventaPersonaId = personaIds.length > 0 ? personaIds[0] : null;
 
-    // ✅ FIX: Cuando es pago en plazos, el "total" de la venta
+    // ✅ Cuando es pago en plazos, el "total" de la venta
     //    refleja SOLO lo cobrado (montoEntregado).
-    // ✅ Coach: si se aplicó coach, el total cobrado es 0.
     let totalVenta;
-    if (coachId) {
-      totalVenta = 0;
-    } else if (registrationData.pagoPlazos) {
+    if (registrationData.pagoPlazos) {
       totalVenta = Number(registrationData.montoEntregado || 0);
     } else {
       totalVenta = Number(registrationData.total);
@@ -887,7 +877,7 @@ exports.registerMember = async (registrationData) => {
     const ventaId = ventaResult.rows[0].id;
 
     // ============================================
-    // 12. Detalles (con coach_id si aplica)
+    // 12. Detalles (con coach_id como referencia)
     // ============================================
     const countByServicio = {};
     for (const accion of acciones) {
@@ -920,10 +910,8 @@ exports.registerMember = async (registrationData) => {
     // ============================================
     // 13. Pagos pendientes
     // ============================================
-    // ✅ Si hay coach, el pago es 0 → no hay pendiente.
     const pagosPendientesIds = [];
     if (
-      !coachId &&
       registrationData.pagoPlazos &&
       registrationData.montoPendiente > 0 &&
       personaIds.length > 0
@@ -956,12 +944,9 @@ exports.registerMember = async (registrationData) => {
     // ============================================
     // 14. Movimiento de caja (SOLO EFECTIVO)
     // ============================================
-    // ✅ Si hay coach, no entra dinero a caja (total = 0).
     let montoBaseCaja;
 
-    if (coachId) {
-      montoBaseCaja = 0;
-    } else if (registrationData.pagoPlazos) {
+    if (registrationData.pagoPlazos) {
       montoBaseCaja = Number(registrationData.montoEntregado || 0);
     } else {
       montoBaseCaja = Number(registrationData.total);
@@ -1016,12 +1001,14 @@ exports.registerMember = async (registrationData) => {
       const usuarioId = usuarioResult.rows[0].usuario_id;
 
       let descripcionMovimiento;
-      if (coachId) {
-        descripcionMovimiento = `Inscripción con Couch ${coachNombre} aplicado (sin cobro)`;
-      } else if (registrationData.pagoPlazos) {
+      if (registrationData.pagoPlazos) {
         descripcionMovimiento = `Ingreso por inscripción (Pago en plazos - Entregado: Bs. ${registrationData.montoEntregado}, Pendiente: Bs. ${registrationData.montoPendiente})`;
       } else {
         descripcionMovimiento = "Ingreso por inscripción de servicios (Efectivo)";
+      }
+
+      if (coachId) {
+        descripcionMovimiento += ` | Couch: ${coachNombre}`;
       }
 
       await client.query(
@@ -1054,9 +1041,7 @@ exports.registerMember = async (registrationData) => {
       success: true,
       ventaId: ventaId,
       pagoPendienteIds: pagosPendientesIds,
-      message: coachId
-        ? `Inscripción registrada con Couch ${coachNombre} aplicado (sin cobro)`
-        : registrationData.pagoPlazos
+      message: registrationData.pagoPlazos
         ? `Inscripción registrada correctamente. Cobrado: Bs. ${registrationData.montoEntregado}, Pendiente: Bs. ${registrationData.montoPendiente}`
         : "Inscripción registrada correctamente",
     };

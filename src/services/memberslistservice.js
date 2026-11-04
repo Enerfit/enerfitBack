@@ -2,7 +2,7 @@
 const { query } = require("../../db");
 
 // ============================================
-// HELPER: construir WHERE base (reusado por getMembers y getAllMembers)
+// HELPER: construir WHERE base
 // ============================================
 function buildWhereConditions({
   searchTerm,
@@ -222,6 +222,9 @@ const getMembers = async (
     if (uniqueIds.length > 0) {
       const placeholders = uniqueIds.map((_, i) => `$${i + 1}`).join(",");
 
+      // ============================================
+      // Trae también el coach asignado en la última venta
+      // ============================================
       const allServicesQuery = `
         WITH inscripciones_calculadas AS (
           SELECT 
@@ -256,17 +259,40 @@ const getMembers = async (
                 ic.inscripcion_id DESC
             ) AS rn_por_tipo
           FROM inscripciones_calculadas ic
+        ),
+        -- Última venta asociada a cada inscripción
+        venta_por_inscripcion AS (
+          SELECT DISTINCT ON (dvs.inscripcion_id)
+            dvs.inscripcion_id,
+            dvs.coach_id,
+            vs.id AS venta_id
+          FROM detalle_venta_servicios dvs
+          INNER JOIN ventas_servicios vs ON vs.id = dvs.venta_servicio_id
+          ORDER BY dvs.inscripcion_id, vs.fecha DESC, vs.id DESC
         )
         SELECT 
           c.persona_id,
           c.sucursal_id,
+          c.inscripcion_id,
           c.servicio_nombre,
           c.ingresos_disponibles,
           TO_CHAR(c.fecha_inicio, 'YYYY-MM-DD') AS fecha_inicio,
           TO_CHAR(c.fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento,
           CASE WHEN c.es_activa THEN 'active' ELSE 'inactive' END AS servicio_status,
-          c.tipo_servicio
+          c.tipo_servicio,
+          vpi.coach_id,
+          CASE 
+            WHEN vpi.coach_id IS NOT NULL 
+              THEN CONCAT(pc.nombres, ' ', pc.apellidos)
+            ELSE NULL
+          END AS coach_nombre
         FROM candidatas c
+        LEFT JOIN venta_por_inscripcion vpi 
+          ON vpi.inscripcion_id = c.inscripcion_id
+        LEFT JOIN empleados ec 
+          ON ec.id = vpi.coach_id
+        LEFT JOIN personas pc 
+          ON pc.id = ec.persona_id
         WHERE c.rn_por_tipo = 1
         ORDER BY c.persona_id, c.sucursal_id, 
                  CASE WHEN c.es_activa THEN 0 ELSE 1 END,
@@ -285,11 +311,14 @@ const getMembers = async (
         servicesByMember.set(key, []);
       }
       servicesByMember.get(key).push({
+        inscripcionId: svc.inscripcion_id,
         name: svc.servicio_nombre,
         startDate: svc.fecha_inicio || "",
         expirationDate: svc.fecha_vencimiento,
         status: svc.servicio_status,
         ingresos_disponibles: svc.ingresos_disponibles,
+        coachId: svc.coach_id || null,
+        coachNombre: svc.coach_nombre || null,
       });
     });
 
@@ -322,7 +351,7 @@ const getMembers = async (
 };
 
 // ============================================
-// GET ALL MEMBERS (sin paginación, para exportar)
+// GET ALL MEMBERS (sin paginación)
 // ============================================
 const getAllMembers = async (
   searchTerm,
@@ -387,6 +416,15 @@ const getAllMembers = async (
               ic.inscripcion_id DESC
           ) AS rn_por_tipo
         FROM inscripciones_calculadas ic
+      ),
+      venta_por_inscripcion AS (
+        SELECT DISTINCT ON (dvs.inscripcion_id)
+          dvs.inscripcion_id,
+          dvs.coach_id,
+          vs.id AS venta_id
+        FROM detalle_venta_servicios dvs
+        INNER JOIN ventas_servicios vs ON vs.id = dvs.venta_servicio_id
+        ORDER BY dvs.inscripcion_id, vs.fecha DESC, vs.id DESC
       )
       SELECT 
         c.persona_id,
@@ -396,11 +434,18 @@ const getAllMembers = async (
         TO_CHAR(c.fecha_nacimiento, 'YYYY-MM-DD') AS birthdate,
         c.sucursal_id,
         c.sucursal_name,
+        c.inscripcion_id,
         c.servicio_nombre,
         c.ingresos_disponibles,
         TO_CHAR(c.fecha_inicio, 'YYYY-MM-DD') AS fecha_inicio,
         TO_CHAR(c.fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento,
         CASE WHEN c.es_activa THEN 'active' ELSE 'inactive' END AS servicio_status,
+        vpi.coach_id,
+        CASE 
+          WHEN vpi.coach_id IS NOT NULL 
+            THEN CONCAT(pc.nombres, ' ', pc.apellidos)
+          ELSE NULL
+        END AS coach_nombre,
         CASE 
           WHEN EXISTS (
             SELECT 1 FROM inscripciones i2 
@@ -412,6 +457,12 @@ const getAllMembers = async (
           ELSE 'inactive'
         END AS member_status
       FROM candidatas c
+      LEFT JOIN venta_por_inscripcion vpi 
+        ON vpi.inscripcion_id = c.inscripcion_id
+      LEFT JOIN empleados ec 
+        ON ec.id = vpi.coach_id
+      LEFT JOIN personas pc 
+        ON pc.id = ec.persona_id
       WHERE c.rn_por_tipo = 1
       ORDER BY c.nombres, c.apellidos, c.sucursal_id,
                CASE WHEN c.es_activa THEN 0 ELSE 1 END,
@@ -443,16 +494,21 @@ const getAllMembers = async (
       const member = membersMap.get(key);
 
       const servicioExistente = member.services.find(
-        (service) => service.name === row.servicio_nombre
+        (service) =>
+          service.inscripcionId === row.inscripcion_id ||
+          service.name === row.servicio_nombre
       );
 
       if (!servicioExistente) {
         member.services.push({
+          inscripcionId: row.inscripcion_id,
           name: row.servicio_nombre,
           startDate: row.fecha_inicio || "",
           expirationDate: row.fecha_vencimiento,
           status: row.servicio_status,
           ingresos_disponibles: row.ingresos_disponibles,
+          coachId: row.coach_id || null,
+          coachNombre: row.coach_nombre || null,
         });
       }
     });
@@ -465,6 +521,7 @@ const getAllMembers = async (
     );
   }
 };
+
 // ============================================
 // EDIT MEMBER
 // ============================================
@@ -483,7 +540,6 @@ const editMember = async (id, nombres, apellidos, ci, phone) => {
       throw error;
     }
 
-    // ✅ Ya NO se actualiza fecha_nacimiento
     const updateQuery = `
       UPDATE personas 
       SET nombres = $1, apellidos = $2, ci = $3, telefono = $4
@@ -515,9 +571,8 @@ const editMember = async (id, nombres, apellidos, ci, phone) => {
   }
 };
 
+// ============================================
 // UPDATE INSCRIPTION DATES
-// ✅ Admin y recepcionista pueden editar siempre
-// ✅ Registra el movimiento en movimientos_fechas_inscripcion
 // ============================================
 const updateInscriptionDates = async (
   personaId,
@@ -535,14 +590,6 @@ const updateInscriptionDates = async (
       );
     }
 
-    console.log("updateInscriptionDates - Buscando inscripción:", {
-      personaId,
-      serviceName,
-      usuarioId,
-      sucursalId,
-    });
-
-    // 1) Buscar la inscripción (activa o no)
     const findQuery = `
       SELECT 
         i.id, 
@@ -568,13 +615,9 @@ const updateInscriptionDates = async (
     }
 
     const inscripcion = findResult.rows[0];
-
-    // ✅ Ya NO se bloquea por estado_inscripcion
-
     const fechaInicioAnterior = inscripcion.fecha_inicio;
     const fechaVencimientoAnterior = inscripcion.fecha_vencimiento;
 
-    // 2) Actualizar fechas
     const updateQuery = `
       UPDATE inscripciones
       SET fecha_inicio = $1::date, fecha_vencimiento = $2::date
@@ -593,9 +636,6 @@ const updateInscriptionDates = async (
 
     const updated = result.rows[0];
 
-    console.log("Inscripción actualizada:", updated);
-
-    // 3) Registrar movimiento (auditoría)
     const sucursalMovimiento =
       inscripcion.sucursal_id || (sucursalId ? Number(sucursalId) : null);
 
@@ -639,9 +679,7 @@ const updateInscriptionDates = async (
         descripcion,
       ]);
     } else {
-      console.warn(
-        "⚠️ No se pudo registrar el movimiento: falta sucursal_id"
-      );
+      console.warn("⚠️ No se pudo registrar el movimiento: falta sucursal_id");
     }
 
     return updated;
@@ -650,6 +688,87 @@ const updateInscriptionDates = async (
     throw new Error(
       `Error al actualizar fechas de inscripción: ${error.message}`
     );
+  }
+};
+
+// ============================================
+// UPDATE SERVICE COACH
+// Actualiza detalle_venta_servicios.coach_id para la última venta
+// asociada a la inscripción indicada.
+// - Si coachId es null => quita el coach.
+// - Verifica que la inscripción pertenezca a la persona.
+// - Verifica que el coach exista y tenga rol 'couch'.
+// ============================================
+const updateServiceCoach = async (personaId, inscripcionId, coachId) => {
+  try {
+    // 1) Verificar que la inscripción pertenece a la persona
+    const checkInscripcion = await query(
+      `SELECT id, persona_id FROM inscripciones WHERE id = $1 AND estado = 1`,
+      [inscripcionId]
+    );
+
+    if (checkInscripcion.rows.length === 0) {
+      throw new Error("Inscripción no encontrada");
+    }
+
+    if (checkInscripcion.rows[0].persona_id.toString() !== personaId.toString()) {
+      throw new Error("La inscripción no pertenece a la persona indicada");
+    }
+
+    // 2) Si hay coach, validar que exista y sea rol 'couch'
+    if (coachId !== null && coachId !== undefined) {
+      const checkCoach = await query(
+        `SELECT id, rol FROM empleados WHERE id = $1 AND estado IN (0, 1)`,
+        [coachId]
+      );
+
+      if (checkCoach.rows.length === 0) {
+        throw new Error("Coach no encontrado");
+      }
+
+      if (checkCoach.rows[0].rol !== "couch") {
+        throw new Error(
+          `El empleado seleccionado no tiene rol "couch" (rol actual: ${checkCoach.rows[0].rol})`
+        );
+      }
+    }
+
+    // 3) Buscar el detalle de venta más reciente para esta inscripción
+    const findDetalle = await query(
+      `
+      SELECT dvs.id AS detalle_id, dvs.venta_servicio_id, vs.fecha
+      FROM detalle_venta_servicios dvs
+      INNER JOIN ventas_servicios vs ON vs.id = dvs.venta_servicio_id
+      WHERE dvs.inscripcion_id = $1
+      ORDER BY vs.fecha DESC, vs.id DESC
+      LIMIT 1
+      `,
+      [inscripcionId]
+    );
+
+    if (findDetalle.rows.length === 0) {
+      throw new Error(
+        "No se encontró una venta asociada a esta inscripción para actualizar el coach"
+      );
+    }
+
+    const detalleId = findDetalle.rows[0].detalle_id;
+
+    // 4) Actualizar coach_id
+    const update = await query(
+      `
+      UPDATE detalle_venta_servicios
+      SET coach_id = $1
+      WHERE id = $2
+      RETURNING id, inscripcion_id, coach_id
+      `,
+      [coachId === null ? null : coachId, detalleId]
+    );
+
+    return update.rows[0];
+  } catch (error) {
+    console.error("Error en updateServiceCoach service:", error);
+    throw new Error(`Error al actualizar coach: ${error.message}`);
   }
 };
 
@@ -730,6 +849,7 @@ module.exports = {
   editMember,
   deleteMember,
   updateInscriptionDates,
+  updateServiceCoach,
   getAvailableServices,
   getAvailableBranches,
 };

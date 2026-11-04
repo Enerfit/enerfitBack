@@ -111,7 +111,6 @@ const getAllMembers = async (req, res) => {
   }
 };
 
-// ✅ editMember: ya no recibe ni actualiza birthDate
 const editMember = async (req, res) => {
   try {
     const { id } = req.params;
@@ -268,12 +267,60 @@ const updateInscriptionDates = async (req, res) => {
   }
 };
 
+// ============================================
+// ACTUALIZAR COACH DE UNA INSCRIPCIÓN
+// ============================================
+const updateServiceCoach = async (req, res) => {
+  try {
+    const { id } = req.params; // persona_id
+    const { inscripcionId, coachId } = req.body;
+
+    if (!inscripcionId) {
+      return res.status(400).json({
+        success: false,
+        message: "inscripcionId es requerido",
+      });
+    }
+
+    if (
+      coachId !== null &&
+      coachId !== undefined &&
+      (isNaN(Number(coachId)) || Number(coachId) <= 0)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "coachId inválido",
+      });
+    }
+
+    const result = await membersListService.updateServiceCoach(
+      id,
+      Number(inscripcionId),
+      coachId === null || coachId === undefined ? null : Number(coachId)
+    );
+
+    res.json({
+      success: true,
+      message: "Coach actualizado exitosamente",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Error en updateServiceCoach controller:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Error al actualizar coach",
+      error: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
+  }
+};
+
 module.exports = {
   getMembers,
   getAllMembers,
   editMember,
   deleteMember,
   updateInscriptionDates,
+  updateServiceCoach,
   getAvailableServices,
   getAvailableBranches,
   testRoute,

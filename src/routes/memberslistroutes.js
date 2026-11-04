@@ -17,6 +17,9 @@ router.put("/:id", authorize(['admin','recepcionista']), membersListController.e
 // ✅ Actualizar fechas de un servicio (admin y recepcionista)
 router.put("/:id/service-dates", authorize(['admin','recepcionista']), membersListController.updateInscriptionDates);
 
+// ✅ Actualizar coach de una inscripción (admin y recepcionista)
+router.put("/:id/service-coach", authorize(['admin','recepcionista']), membersListController.updateServiceCoach);
+
 router.delete("/:id", authorize(['admin','recepcionista']), membersListController.deleteMember);
 
 module.exports = router;

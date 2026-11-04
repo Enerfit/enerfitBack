@@ -94,6 +94,27 @@ exports.getServicesByBranch = async (sucursalId) => {
 };
 
 // ============================================
+// LISTAR COACHES POR SUCURSAL
+// ============================================
+exports.getCoachesBySucursal = async (sucursalId) => {
+  const result = await query(
+    `
+    SELECT e.id, p.nombres, p.apellidos, p.ci, p.telefono,
+           (p.nombres || ' ' || p.apellidos) AS nombre_completo
+    FROM empleados e
+    INNER JOIN personas p ON p.id = e.persona_id
+    WHERE e.rol = 'couch'
+      AND e.estado = 1
+      AND e.sucursal_id = $1
+    ORDER BY p.nombres, p.apellidos
+    `,
+    [sucursalId]
+  );
+
+  return result.rows;
+};
+
+// ============================================
 // BUSCAR PERSONAS
 // ============================================
 exports.searchPeople = async (searchTerm) => {
@@ -386,13 +407,42 @@ async function analizarConflictoInscripcion(
 exports.analizarConflictoInscripcion = analizarConflictoInscripcion;
 
 // ============================================
-// REGISTRAR MIEMBRO (MULTI-PERSONA)
+// REGISTRAR MIEMBRO (MULTI-PERSONA) + COACH
 // ============================================
 exports.registerMember = async (registrationData) => {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
+
+    // ============================================
+    // 0. Resolver coach (si viene)
+    // ============================================
+    let coachId = null;
+    let coachNombre = null;
+
+    if (registrationData.coach_id) {
+      const coachRes = await client.query(
+        `
+        SELECT e.id, (p.nombres || ' ' || p.apellidos) AS nombre_completo
+        FROM empleados e
+        INNER JOIN personas p ON p.id = e.persona_id
+        WHERE e.id = $1
+          AND e.rol = 'couch'
+          AND e.estado = 1
+        `,
+        [registrationData.coach_id]
+      );
+
+      if (coachRes.rows.length === 0) {
+        throw new Error(
+          `Coach no válido o inactivo (id=${registrationData.coach_id})`
+        );
+      }
+
+      coachId = coachRes.rows[0].id;
+      coachNombre = coachRes.rows[0].nombre_completo;
+    }
 
     // ============================================
     // 1. Resolver personas
@@ -765,6 +815,11 @@ exports.registerMember = async (registrationData) => {
       detallePago += ` | Pago en plazos - Total: ${registrationData.total}, Entregado: ${registrationData.montoEntregado}, Pendiente: ${registrationData.montoPendiente}`;
     }
 
+    // ✅ NUEVO: si se aplica coach, agregar al detalle
+    if (coachId) {
+      detallePago = `Couch ${coachNombre} aplicado (descuento total) | ${detallePago}`;
+    }
+
     // ============================================
     // 9. Subtotal
     // ============================================
@@ -773,15 +828,37 @@ exports.registerMember = async (registrationData) => {
     }, 0);
 
     // ============================================
-    // 10. Crear venta
+    // 10. Descuento por coach
+    // ============================================
+    // Regla: si hay coach, el descuento cubre el total (monto a 0).
+    // El descuento manual/cupón se ignora cuando hay coach.
+    let descuentoFinal = Number(registrationData.descuento || 0);
+    let descripcionDescuentoFinal =
+      registrationData.descripcionDescuento || null;
+
+    if (coachId) {
+      descuentoFinal = subtotal;
+      descripcionDescuentoFinal = `Couch (${coachNombre}) aplicado`;
+    }
+
+    const totalFinal = Math.max(0, subtotal - descuentoFinal);
+
+    // ============================================
+    // 11. Crear venta
     // ============================================
     const ventaPersonaId = personaIds.length > 0 ? personaIds[0] : null;
 
     // ✅ FIX: Cuando es pago en plazos, el "total" de la venta
     //    refleja SOLO lo cobrado (montoEntregado).
-    const totalVenta = registrationData.pagoPlazos
-      ? Number(registrationData.montoEntregado || 0)
-      : Number(registrationData.total);
+    // ✅ Coach: si se aplicó coach, el total cobrado es 0.
+    let totalVenta;
+    if (coachId) {
+      totalVenta = 0;
+    } else if (registrationData.pagoPlazos) {
+      totalVenta = Number(registrationData.montoEntregado || 0);
+    } else {
+      totalVenta = Number(registrationData.total);
+    }
 
     const ventaResult = await client.query(
       `
@@ -796,8 +873,8 @@ exports.registerMember = async (registrationData) => {
         ventaPersonaId,
         registrationData.empleadoId,
         subtotal,
-        registrationData.descuento,
-        registrationData.descripcionDescuento,
+        descuentoFinal,
+        descripcionDescuentoFinal,
         totalVenta,
         registrationData.formaPago,
         detallePago,
@@ -810,7 +887,7 @@ exports.registerMember = async (registrationData) => {
     const ventaId = ventaResult.rows[0].id;
 
     // ============================================
-    // 11. Detalles
+    // 12. Detalles (con coach_id si aplica)
     // ============================================
     const countByServicio = {};
     for (const accion of acciones) {
@@ -832,29 +909,28 @@ exports.registerMember = async (registrationData) => {
 
       await client.query(
         `
-        INSERT INTO detalle_venta_servicios (venta_servicio_id, inscripcion_id, precio)
-        VALUES ($1, $2, $3)
+        INSERT INTO detalle_venta_servicios
+          (venta_servicio_id, inscripcion_id, precio, coach_id)
+        VALUES ($1, $2, $3, $4)
       `,
-        [ventaId, inscripcionId, precioPorDetalle]
+        [ventaId, inscripcionId, precioPorDetalle, coachId]
       );
     }
 
     // ============================================
-    // 12. Pagos pendientes
+    // 13. Pagos pendientes
     // ============================================
-    // ✅ FIX: El pago pendiente registra el PLAN COMPLETO:
-    //    monto_total = 150 (precio del servicio)
-    //    monto_pagado = 100 (lo ya entregado)
-    //    monto_pendiente = 50 (lo que falta)
+    // ✅ Si hay coach, el pago es 0 → no hay pendiente.
     const pagosPendientesIds = [];
     if (
+      !coachId &&
       registrationData.pagoPlazos &&
       registrationData.montoPendiente > 0 &&
       personaIds.length > 0
     ) {
-      const montoTotalReal = Number(registrationData.total);              // 150
-      const montoPagadoReal = Number(registrationData.montoEntregado || 0); // 100
-      const montoPendienteReal = Number(registrationData.montoPendiente); // 50
+      const montoTotalReal = Number(registrationData.total);
+      const montoPagadoReal = Number(registrationData.montoEntregado || 0);
+      const montoPendienteReal = Number(registrationData.montoPendiente);
 
       const pp = await client.query(
         `
@@ -868,9 +944,9 @@ exports.registerMember = async (registrationData) => {
         [
           personaIds[0],
           ventaId,
-          montoTotalReal,      // ✅ 150
-          montoPagadoReal,     // ✅ 100
-          montoPendienteReal,  // ✅ 50
+          montoTotalReal,
+          montoPagadoReal,
+          montoPendienteReal,
           fechaActual,
         ]
       );
@@ -878,11 +954,14 @@ exports.registerMember = async (registrationData) => {
     }
 
     // ============================================
-    // 13. Movimiento de caja (SOLO EFECTIVO)
+    // 14. Movimiento de caja (SOLO EFECTIVO)
     // ============================================
+    // ✅ Si hay coach, no entra dinero a caja (total = 0).
     let montoBaseCaja;
 
-    if (registrationData.pagoPlazos) {
+    if (coachId) {
+      montoBaseCaja = 0;
+    } else if (registrationData.pagoPlazos) {
       montoBaseCaja = Number(registrationData.montoEntregado || 0);
     } else {
       montoBaseCaja = Number(registrationData.total);
@@ -936,9 +1015,14 @@ exports.registerMember = async (registrationData) => {
 
       const usuarioId = usuarioResult.rows[0].usuario_id;
 
-      const descripcionMovimiento = registrationData.pagoPlazos
-        ? `Ingreso por inscripción (Pago en plazos - Entregado: Bs. ${registrationData.montoEntregado}, Pendiente: Bs. ${registrationData.montoPendiente})`
-        : "Ingreso por inscripción de servicios (Efectivo)";
+      let descripcionMovimiento;
+      if (coachId) {
+        descripcionMovimiento = `Inscripción con Couch ${coachNombre} aplicado (sin cobro)`;
+      } else if (registrationData.pagoPlazos) {
+        descripcionMovimiento = `Ingreso por inscripción (Pago en plazos - Entregado: Bs. ${registrationData.montoEntregado}, Pendiente: Bs. ${registrationData.montoPendiente})`;
+      } else {
+        descripcionMovimiento = "Ingreso por inscripción de servicios (Efectivo)";
+      }
 
       await client.query(
         `
@@ -970,7 +1054,9 @@ exports.registerMember = async (registrationData) => {
       success: true,
       ventaId: ventaId,
       pagoPendienteIds: pagosPendientesIds,
-      message: registrationData.pagoPlazos
+      message: coachId
+        ? `Inscripción registrada con Couch ${coachNombre} aplicado (sin cobro)`
+        : registrationData.pagoPlazos
         ? `Inscripción registrada correctamente. Cobrado: Bs. ${registrationData.montoEntregado}, Pendiente: Bs. ${registrationData.montoPendiente}`
         : "Inscripción registrada correctamente",
     };

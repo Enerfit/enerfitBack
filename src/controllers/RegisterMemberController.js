@@ -109,7 +109,28 @@ exports.getAvailableCoupons = async (req, res) => {
 };
 
 // ============================================
-// REGISTRAR MIEMBRO 
+// LISTAR COACHES POR SUCURSAL
+// ============================================
+exports.getCoachesBySucursal = async (req, res) => {
+  try {
+    const { sucursalId } = req.params;
+
+    if (!sucursalId) {
+      return res.status(400).json({ message: "sucursalId es requerido" });
+    }
+
+    const coaches = await RegisterMemberService.getCoachesBySucursal(
+      parseInt(sucursalId)
+    );
+    res.json(coaches);
+  } catch (error) {
+    console.error("Error in getCoachesBySucursal:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ============================================
+// REGISTRAR MIEMBRO
 // ============================================
 exports.registerMember = async (req, res) => {
   try {
@@ -138,6 +159,10 @@ exports.registerMember = async (req, res) => {
       error.message.includes("inscripción activa")
     ) {
       return res.status(409).json({ message: error.message });
+    }
+
+    if (error.message.includes("Coach")) {
+      return res.status(400).json({ message: error.message });
     }
 
     res.status(500).json({ message: error.message });

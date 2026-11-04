@@ -20,6 +20,9 @@ router.get("/coupons/validate", RegisterMemberController.validateCoupon);
 // Listar cupones disponibles para la sucursal
 router.get("/coupons/available/:sucursalId", RegisterMemberController.getAvailableCoupons);
 
+// Listar coaches disponibles para una sucursal (para el switch "Couch")
+router.get("/coaches/sucursal/:sucursalId", RegisterMemberController.getCoachesBySucursal);
+
 // Registrar nueva inscripción
 router.post("/subscriptions/register", RegisterMemberController.registerMember);
 
@@ -34,4 +37,4 @@ router.get("/people/:personaId/has-fingerprint", RegisterMemberController.hasFin
 router.post("/people", RegisterMemberController.createPersonQuick);
 
 
-module.exports = router; 
+module.exports = router;

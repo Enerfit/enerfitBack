@@ -1,46 +1,30 @@
 const express = require("express");
 const cors = require("cors");
 const { connectDB } = require("./db");
-const {
-  startInscripcionesCron,
-} = require("./src/jobs/updateInscripcionesEstados");
+const { startInscripcionesCron } = require("./src/jobs/updateInscripcionesEstados");
 
 const app = express();
 
-const allowedOrigins = [
+const allowedOrigins = new Set([
   "http://localhost:8080",
   "https://enerfitback.onrender.com",
   "https://enerfit.spiderlabsystems.com",
-];
+]);
 
-// Opciones de configuración CORS
 const corsOptions = {
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
-
-    if (
-      allowedOrigins.some((allowedOrigin) =>
-        origin.includes(allowedOrigin.replace(/https?:\/\//, "")),
-      )
-    ) {
-      return callback(null, true);
-    }
-
-    const msg = `El origen ${origin} no tiene permiso de acceso.`;
-    return callback(new Error(msg), false);
+    if (allowedOrigins.has(origin)) return callback(null, true);
+    return callback(new Error(`El origen ${origin} no tiene permiso de acceso.`), false);
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 
-// Aplica CORS
 app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
-// Maneja solicitudes preflight (OPTIONS)
-app.options("*", cors(corsOptions));
-
-// ✅ CONFIGURACIÓN CORREGIDA: Aumentar límite para TODAS las rutas
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
@@ -65,8 +49,8 @@ const Planes = require("./src/routes/PlanesRoutes");
 const sidebarPasswordRoutes = require("./src/routes/sidebarPasswordRoutes");
 const cuponesRoutes = require("./src/routes/cuponesRoutes");
 const zumbaRoutes = require("./src/routes/zumbaRoutes");
+const coachRoutes = require("./src/routes/coachRoutes"); // ✅ NUEVO
 
-// ✅ CONFIGURACIÓN CORREGIDA: Usar las rutas SIN duplicar middleware
 app.use("/api/reminders", remindersRoutes);
 app.use("/api/login", loginRoutes);
 app.use("/api/members", membersListRoutes);
@@ -87,8 +71,8 @@ app.use("/api/planes", Planes);
 app.use("/api/password", sidebarPasswordRoutes);
 app.use("/api/cupones", cuponesRoutes);
 app.use("/api/zumba", zumbaRoutes);
+app.use("/api/coaches", coachRoutes); // ✅ NUEVO
 
-// Manejador de errores global
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({
@@ -98,15 +82,13 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Ruta 404 para manejar rutas no encontradas
-app.use("*", (req, res) => {
+app.use((req, res) => {
   res.status(404).json({
     success: false,
     message: `Ruta no encontrada: ${req.originalUrl}`,
   });
 });
 
-// Iniciar el servidor
 const startServer = async () => {
   try {
     await connectDB();
@@ -114,9 +96,6 @@ const startServer = async () => {
     app.listen(PORT, () => {
       console.log(`Servidor corriendo en el puerto ${PORT}`);
     });
-
-    // ✅ Iniciar cron job de actualización de estados de inscripciones
-    // Se ejecuta todos los días a las 01:00 AM (America/La_Paz)
     startInscripcionesCron();
   } catch (error) {
     console.error("Error al iniciar el servidor:", error);

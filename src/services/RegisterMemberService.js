@@ -4,7 +4,7 @@ const { query, pool } = require("../../db");
 // CONVENCIÓN DE ESTADOS POR TABLA (verificado en BD)
 // ============================================
 const ESTADO = {
-  personas: 0,
+  personas: 0, // 0 = activo, 1 = eliminado
   servicios: 1,
   inscripciones: 1,
   cupones: 1,
@@ -445,7 +445,7 @@ exports.registerMember = async (registrationData) => {
     }
 
     // ============================================
-    // 1. Resolver personas
+    // 1. Resolver personas (CON VALIDACIÓN DE ESTADO EXACTA)
     // ============================================
     const personaIds = [];
 
@@ -454,13 +454,26 @@ exports.registerMember = async (registrationData) => {
         p.personaId && Number(p.personaId) > 0 ? Number(p.personaId) : null;
 
       if (!personaId) {
+        // Buscamos si el CI ya existe (sin importar el estado)
         const existing = await client.query(
-          `SELECT id FROM personas WHERE ci = $1 AND estado = $2`,
-          [p.ci, ESTADO.personas]
+          `SELECT id, estado FROM personas WHERE ci = $1`,
+          [p.ci]
         );
 
         if (existing.rows.length > 0) {
-          personaId = existing.rows[0].id;
+          const personaDb = existing.rows[0];
+          
+          // 0 es activo
+          if (personaDb.estado === 0) {
+            // Si ya existe y está activa, reutilizamos el ID para la venta
+            personaId = personaDb.id;
+          } 
+          // 1 es eliminado
+          else if (personaDb.estado === 1) {
+            throw new Error(`La persona con CI ${p.ci} ya existe pero está ELIMINADA. Contacte con soporte para restaurarla.`);
+          } else {
+            throw new Error(`La persona con CI ${p.ci} ya existe pero tiene un estado inválido.`);
+          }
         } else {
           const fechaNac = p.fechaNacimiento
             ? toYMD(p.fechaNacimiento)
@@ -815,7 +828,6 @@ exports.registerMember = async (registrationData) => {
       detallePago += ` | Pago en plazos - Total: ${registrationData.total}, Entregado: ${registrationData.montoEntregado}, Pendiente: ${registrationData.montoPendiente}`;
     }
 
-    // ✅ Si se aplica coach, solo se anota como referencia (no afecta montos)
     if (coachId) {
       detallePago = `Couch ${coachNombre} | ${detallePago}`;
     }
@@ -828,7 +840,7 @@ exports.registerMember = async (registrationData) => {
     }, 0);
 
     // ============================================
-    // 10. Descuento (normal, el coach NO afecta montos)
+    // 10. Descuento
     // ============================================
     const descuentoFinal = Number(registrationData.descuento || 0);
     const descripcionDescuentoFinal =
@@ -841,8 +853,6 @@ exports.registerMember = async (registrationData) => {
     // ============================================
     const ventaPersonaId = personaIds.length > 0 ? personaIds[0] : null;
 
-    // ✅ Cuando es pago en plazos, el "total" de la venta
-    //    refleja SOLO lo cobrado (montoEntregado).
     let totalVenta;
     if (registrationData.pagoPlazos) {
       totalVenta = Number(registrationData.montoEntregado || 0);
@@ -877,7 +887,7 @@ exports.registerMember = async (registrationData) => {
     const ventaId = ventaResult.rows[0].id;
 
     // ============================================
-    // 12. Detalles (con coach_id como referencia)
+    // 12. Detalles
     // ============================================
     const countByServicio = {};
     for (const accion of acciones) {
@@ -942,7 +952,7 @@ exports.registerMember = async (registrationData) => {
     }
 
     // ============================================
-    // 14. Movimiento de caja (SOLO EFECTIVO)
+    // 14. Movimiento de caja
     // ============================================
     let montoBaseCaja;
 
@@ -1173,7 +1183,7 @@ exports.hasFingerprint = async (personaId) => {
 };
 
 // ============================================
-// CREAR PERSONA RÁPIDAMENTE (sin inscripción)
+// CREAR PERSONA RÁPIDAMENTE (CON ALERTAS ESPECÍFICAS)
 // ============================================
 exports.createPersonQuick = async (personData) => {
   const { nombres, apellidos, ci, telefono, fechaNacimiento } = personData;
@@ -1182,18 +1192,29 @@ exports.createPersonQuick = async (personData) => {
     throw new Error("Nombres, apellidos y CI son obligatorios");
   }
 
+  // 1. Buscamos si el CI existe SIN importar el estado
   const existing = await query(
-    `SELECT id, nombres, apellidos, ci, telefono, fecha_nacimiento
+    `SELECT id, nombres, apellidos, ci, telefono, fecha_nacimiento, estado
      FROM personas
-     WHERE ci = $1 AND estado = $2`,
-    [ci, ESTADO.personas]
+     WHERE ci = $1`,
+    [ci]
   );
 
   if (existing.rows.length > 0) {
-    return {
-      alreadyExists: true,
-      persona: existing.rows[0],
-    };
+    const persona = existing.rows[0];
+    
+    // 0 es activo
+    if (persona.estado === 0) {
+      throw new Error("La persona ya existe y se encuentra ACTIVA en el sistema.");
+    } 
+    // 1 es eliminado
+    else if (persona.estado === 1) {
+      throw new Error("La persona ya existe pero está ELIMINADA. Contacte con soporte para restaurarla.");
+    } 
+    // Cualquier otro estado
+    else {
+      throw new Error("La persona ya existe pero tiene un estado no válido. Contacte con soporte.");
+    }
   }
 
   const fechaNac = fechaNacimiento ? toYMD(fechaNacimiento) : null;

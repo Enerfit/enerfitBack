@@ -48,8 +48,53 @@ const getBirthdayMembers = async (req, res) => {
   }
 };
 
+const getAllPersons = async (req, res) => {
+  try {
+    const sucursalId = req.params.sucursalId;
+    const serviceFilter = req.query.service || null;
+    console.log(
+      "Solicitud recibida para /api/reminders/all-persons/",
+      sucursalId,
+      "serviceFilter:",
+      serviceFilter
+    );
+    const persons = await remindersService.getAllPersonsByBranch(
+      sucursalId,
+      serviceFilter
+    );
+    console.log("Personas inscritas encontradas:", persons.length);
+    res.json(persons);
+  } catch (error) {
+    console.error("Error en getAllPersons:", error);
+    res.status(500).json({
+      message: "Error al obtener personas inscritas",
+      error: error.message,
+    });
+  }
+};
+
+const getServiceNames = async (req, res) => {
+  try {
+    const sucursalId = req.params.sucursalId;
+    console.log(
+      "Solicitud recibida para /api/reminders/services/",
+      sucursalId
+    );
+    const services = await remindersService.getServiceNamesForBranch(sucursalId);
+    res.json(services);
+  } catch (error) {
+    console.error("Error en getServiceNames:", error);
+    res.status(500).json({
+      message: "Error al obtener servicios para filtro",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getNewMembers,
   getExpiringMembers,
-  getBirthdayMembers
+  getBirthdayMembers,
+  getAllPersons,
+  getServiceNames,
 };

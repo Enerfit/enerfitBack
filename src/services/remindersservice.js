@@ -24,6 +24,8 @@ const getNewMembers = async (sucursalId) => {
       WHERE i.fecha_inicio::date = (NOW() AT TIME ZONE 'America/La_Paz')::date
       AND i.estado = 1
       AND i.sucursal_id = $1
+      AND p.telefono IS NOT NULL 
+      AND p.telefono != ''
       ORDER BY p.id, s.id, i.fecha_inicio DESC
     `, [sucursalId]);
 
@@ -90,6 +92,8 @@ const getExpiringMembers = async (sucursalId) => {
         AND ((NOW() AT TIME ZONE 'America/La_Paz')::date + INTERVAL '3 days')
       AND i.estado = 1
       AND i.sucursal_id = $1
+      AND p.telefono IS NOT NULL 
+      AND p.telefono != ''
       ORDER BY p.id, s.id, i.fecha_vencimiento ASC
     `, [sucursalId]);
 
@@ -141,6 +145,8 @@ const getBirthdayMembers = async (sucursalId) => {
       AND EXTRACT(DAY FROM p.fecha_nacimiento) = $2
       AND i.estado = 1
       AND i.sucursal_id = $3
+      AND p.telefono IS NOT NULL 
+      AND p.telefono != ''
       ORDER BY p.id, p.nombres ASC
     `, [month, day, sucursalId]);
 
@@ -207,6 +213,9 @@ const getAllPersonsByBranch = async (sucursalId, serviceFilter = null) => {
 
     // Solo personas "activas" según tu esquema (estado = 0)
     whereConditions.push(`p.estado = 0`);
+
+    // FILTRO NUEVO: Solo personas con teléfono válido
+    whereConditions.push(`p.telefono IS NOT NULL AND p.telefono != ''`);
 
     // Filtro por nombre de servicio
     if (serviceFilter && serviceFilter !== "all" && serviceFilter.trim() !== "") {
@@ -295,6 +304,9 @@ const getServiceNamesForBranch = async (sucursalId) => {
       `p.id NOT IN (SELECT persona_id FROM empleados WHERE estado = 1)`
     );
     whereConditions.push(`p.estado = 0`);
+    
+    // FILTRO NUEVO: Solo personas con teléfono válido
+    whereConditions.push(`p.telefono IS NOT NULL AND p.telefono != ''`);
 
     const whereClause =
       whereConditions.length > 0

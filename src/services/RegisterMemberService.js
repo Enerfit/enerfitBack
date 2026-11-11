@@ -462,23 +462,28 @@ exports.registerMember = async (registrationData) => {
 
         if (existing.rows.length > 0) {
           const personaDb = existing.rows[0];
-          
+
           // 0 es activo
           if (personaDb.estado === 0) {
             // Si ya existe y está activa, reutilizamos el ID para la venta
             personaId = personaDb.id;
-          } 
+          }
           // 1 es eliminado
           else if (personaDb.estado === 1) {
-            throw new Error(`La persona con CI ${p.ci} ya existe pero está ELIMINADA. Contacte con soporte para restaurarla.`);
+            throw new Error(
+              `La persona con CI ${p.ci} ya existe pero está ELIMINADA. Contacte con soporte para restaurarla.`
+            );
           } else {
-            throw new Error(`La persona con CI ${p.ci} ya existe pero tiene un estado inválido.`);
+            throw new Error(
+              `La persona con CI ${p.ci} ya existe pero tiene un estado inválido.`
+            );
           }
         } else {
           const fechaNac = p.fechaNacimiento
             ? toYMD(p.fechaNacimiento)
             : null;
 
+          // ✅ Guardamos el teléfono TAL CUAL (sin transformaciones)
           const ins = await client.query(
             `INSERT INTO personas (nombres, apellidos, ci, telefono, fecha_nacimiento, estado)
              VALUES ($1, $2, $3, $4, $5, $6)
@@ -1202,15 +1207,15 @@ exports.createPersonQuick = async (personData) => {
 
   if (existing.rows.length > 0) {
     const persona = existing.rows[0];
-    
+
     // 0 es activo
     if (persona.estado === 0) {
       throw new Error("La persona ya existe y se encuentra ACTIVA en el sistema.");
-    } 
+    }
     // 1 es eliminado
     else if (persona.estado === 1) {
       throw new Error("La persona ya existe pero está ELIMINADA. Contacte con soporte para restaurarla.");
-    } 
+    }
     // Cualquier otro estado
     else {
       throw new Error("La persona ya existe pero tiene un estado no válido. Contacte con soporte.");
@@ -1219,6 +1224,7 @@ exports.createPersonQuick = async (personData) => {
 
   const fechaNac = fechaNacimiento ? toYMD(fechaNacimiento) : null;
 
+  // ✅ Guardamos el teléfono TAL CUAL (sin trim, sin parse, sin limpiar)
   const result = await query(
     `INSERT INTO personas (nombres, apellidos, ci, telefono, fecha_nacimiento, estado)
      VALUES ($1, $2, $3, $4, $5, $6)

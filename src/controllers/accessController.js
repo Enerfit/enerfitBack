@@ -5,15 +5,23 @@ const accessService = require("../services/accessService");
 // ============================================
 exports.getAccessLogs = async (req, res) => {
   try {
-    const { search, type, limit, branchId } = req.query;
+    const { search, type, limit, branchId, startDate, endDate } = req.query;
 
     const branchIdParsed = branchId ? parseInt(branchId) : null;
+
+    // Validar formato de fechas (YYYY-MM-DD)
+    const isValidDate = (d) => d && /^\d{4}-\d{2}-\d{2}$/.test(d);
+
+    const startDateParsed = isValidDate(startDate) ? startDate : null;
+    const endDateParsed = isValidDate(endDate) ? endDate : null;
 
     const logs = await accessService.getAccessLogs(
       search,
       type,
-      limit ? parseInt(limit) : 100, 
-      branchIdParsed
+      limit ? parseInt(limit) : 100,
+      branchIdParsed,
+      startDateParsed,
+      endDateParsed
     );
     res.json(logs);
   } catch (error) {
@@ -181,6 +189,7 @@ exports.registerAccessDeniedNoSubscription = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 // ============================================
 // REGISTER ACCESS BY FINGERPRINT (flujo automático)
 // ============================================

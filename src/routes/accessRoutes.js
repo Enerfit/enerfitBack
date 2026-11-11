@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const accessController = require("../controllers/accessController");
 
-// Obtener registros de acceso (solo del día actual por defecto)
+// Obtener registros de acceso (filtro por fechas opcional vía ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD)
 router.get("/logs", accessController.getAccessLogs);
 
 // Buscar miembros (clientes y empleados)

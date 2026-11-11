@@ -252,7 +252,9 @@ exports.getAccessLogs = async (
   searchTerm,
   typeFilter,
   limit = 100,
-  branchId
+  branchId,
+  startDate = null,
+  endDate = null
 ) => {
   let sql = `
     SELECT 
@@ -273,11 +275,31 @@ exports.getAccessLogs = async (
     FROM registros_acceso ra
     INNER JOIN personas p ON ra.persona_id = p.id
     LEFT JOIN servicios s ON ra.servicio_id = s.id
-    WHERE ra.fecha::date = TIMEZONE('America/La_Paz', NOW())::date
+    WHERE 1=1
   `;
 
   const params = [];
   const whereClauses = [];
+
+  // ============================================
+  // FILTRO POR FECHAS (rango)
+  // ============================================
+  if (startDate && endDate) {
+    whereClauses.push(
+      `ra.fecha::date BETWEEN $${params.length + 1}::date AND $${params.length + 2}::date`
+    );
+    params.push(startDate, endDate);
+  } else if (startDate) {
+    whereClauses.push(`ra.fecha::date >= $${params.length + 1}::date`);
+    params.push(startDate);
+  } else if (endDate) {
+    whereClauses.push(`ra.fecha::date <= $${params.length + 1}::date`);
+    params.push(endDate);
+  } else {
+    whereClauses.push(
+      `ra.fecha::date = TIMEZONE('America/La_Paz', NOW())::date`
+    );
+  }
 
   if (branchId && !Number.isNaN(Number(branchId))) {
     whereClauses.push(`ra.sucursal_id = $${params.length + 1}`);

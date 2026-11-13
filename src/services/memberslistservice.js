@@ -159,6 +159,8 @@ const getMembers = async (
       SELECT 
         pu.persona_id AS id,
         CONCAT(p.nombres, ' ', p.apellidos) AS name,
+        p.nombres AS nombres,
+        p.apellidos AS apellidos,
         p.ci,
         p.telefono AS phone,
         TO_CHAR(p.fecha_nacimiento, 'YYYY-MM-DD') AS birthdate,
@@ -325,6 +327,8 @@ const getMembers = async (
     const membersWithServices = membersResult.rows.map((member) => ({
       id: member.id.toString(),
       name: member.name || "",
+      nombres: member.nombres || "",
+      apellidos: member.apellidos || "",
       ci: member.ci || "",
       phone: member.phone || "",
       birthDate: member.birthdate || "",
@@ -429,6 +433,8 @@ const getAllMembers = async (
       SELECT 
         c.persona_id,
         CONCAT(c.nombres, ' ', c.apellidos) AS name,
+        c.nombres AS nombres,
+        c.apellidos AS apellidos,
         c.ci,
         c.telefono AS phone,
         TO_CHAR(c.fecha_nacimiento, 'YYYY-MM-DD') AS birthdate,
@@ -481,6 +487,8 @@ const getAllMembers = async (
         membersMap.set(key, {
           id: row.persona_id.toString(),
           name: row.name || "",
+          nombres: row.nombres || "",
+          apellidos: row.apellidos || "",
           ci: row.ci || "",
           phone: row.phone || "",
           birthDate: row.birthdate || "",
@@ -542,7 +550,7 @@ const editMember = async (id, nombres, apellidos, ci, phone) => {
 
     const updateQuery = `
       UPDATE personas 
-      SET nombres = $1, apellidos = $2, ci = $3, telefono = $4
+      SET nombres = TRIM($1), apellidos = TRIM($2), ci = TRIM($3), telefono = TRIM($4)
       WHERE id = $5 AND estado = 0
       RETURNING *
     `;

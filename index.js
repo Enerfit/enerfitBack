@@ -9,7 +9,7 @@ const allowedOrigins = new Set([
   "http://localhost:8080",
   "https://enerfitback.onrender.com",
   "https://enerfit.spiderlabsystems.com",
-  "savage.spiderlabsystems.com",
+  "https://savage.spiderlabsystems.com",
 ]);
 
 const corsOptions = {

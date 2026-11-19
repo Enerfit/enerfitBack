@@ -11,7 +11,7 @@ const getDiaSemanaBD = (date) => {
 // ============================================
 // CONFIG: ROLES QUE NO REQUIEREN HORARIO
 // ============================================
-const ROLES_SIN_HORARIO = new Set(["admin"]);
+const ROLES_SIN_HORARIO = new Set(["admin", "couch"]);
 
 const rolRequiereHorario = (rol) => !ROLES_SIN_HORARIO.has(rol);
 
@@ -485,7 +485,13 @@ exports.searchMembers = async (searchTerm, typeFilter = "all", branchId) => {
     `;
 
     if (typeFilter === "all") {
-      clientSql += ` AND NOT EXISTS (SELECT 1 FROM empleados e WHERE e.persona_id = p.id)`;
+      clientSql += ` AND (
+        NOT EXISTS (SELECT 1 FROM empleados e WHERE e.persona_id = p.id)
+        OR (
+          EXISTS (SELECT 1 FROM empleados e WHERE e.persona_id = p.id AND e.rol = 'recepcionista' AND e.estado = 1)
+          AND EXISTS (SELECT 1 FROM candidatas c2 WHERE c2.persona_id = p.id AND c2.rn_por_tipo = 1)
+        )
+      )`;
     }
 
     clientSql += ` GROUP BY p.id`;
@@ -521,7 +527,7 @@ exports.searchMembers = async (searchTerm, typeFilter = "all", branchId) => {
           'sucursal_id', e.sucursal_id,
           'estado', e.estado,
           'trabaja_hoy', CASE
-            WHEN e.rol = 'admin' THEN true
+            WHEN e.rol IN ('admin', 'couch') THEN true
             ELSE EXISTS (
               SELECT 1 FROM horarios_empleado he
               WHERE he.empleado_id = e.id
@@ -1165,6 +1171,37 @@ exports.registerEmployeeCheckIn = async (employeeId, branchId, userId) => {
 
   const emp = employee.rows[0];
 
+  if (emp.rol === "couch") {
+    if (emp.estado !== 1) {
+      return { success: false, denied: true, message: "El couch está inactivo", isLate: false, minutes: 0, rol: emp.rol };
+    }
+
+    const detail = "Ingreso al servicio - Couch";
+    const inserted = await query(
+      `INSERT INTO registros_acceso
+       (persona_id, detalle, estado, sucursal_id, usuario_registro_id, fecha, tipo_persona)
+       VALUES ($1, $2, 'exitoso', $3, $4, TIMEZONE('America/La_Paz', NOW()), 'empleado')
+       RETURNING id, TO_CHAR(fecha, 'YYYY-MM-DD HH24:MI') AS fecha`,
+      [emp.persona_id, detail, branchId, userId]
+    );
+    return {
+      success: true,
+      message: detail,
+      isLate: false,
+      minutes: 0,
+      rol: emp.rol,
+      log: {
+        id: inserted.rows[0].id.toString(),
+        timestamp: inserted.rows[0].fecha,
+        memberName: `${emp.nombres} ${emp.apellidos}`.trim(),
+        memberType: "employee",
+        detail,
+        status: "success",
+        ci: emp.ci,
+      },
+    };
+  }
+
   const { estado } = await getEmployeeEstadoHoy(emp.persona_id);
 
   if (estado === "in") {
@@ -1326,6 +1363,10 @@ exports.registerEmployeeCheckOut = async (employeeId, branchId, userId) => {
 
   const rol = emp.rol;
   const requiereHorario = rolRequiereHorario(rol);
+
+  if (rol === "couch") {
+    return { success: false, denied: true, message: "El couch no registra salida", isEarly: false, minutes: 0, rol };
+  }
 
   const { estado } = await getEmployeeEstadoHoy(emp.persona_id);
 
@@ -1558,7 +1599,7 @@ exports.registerAccessByFingerprint = async (ci, branchId, userId) => {
        e.sucursal_id,
        e.estado,
        CASE
-         WHEN e.rol = 'admin' THEN true
+         WHEN e.rol IN ('admin', 'couch') THEN true
          ELSE EXISTS (
            SELECT 1 FROM horarios_empleado he
            WHERE he.empleado_id = e.id
@@ -1618,8 +1659,37 @@ exports.registerAccessByFingerprint = async (ci, branchId, userId) => {
       };
     }
 
+    // Recepción con servicio activo: elegir jornada o entrenamiento antes de registrar.
+    if (emp.rol === "recepcionista" && emp.estado === 1) {
+      const matches = await exports.searchMembers(persona.ci, "cliente", branchId);
+      const clientMember = matches.find((m) => Number(m.idpersona) === Number(persona.id));
+      const activeServices = (clientMember?.servicios || []).filter(
+        (svc) => svc.estado_inscripcion === "activo"
+      );
+      if (activeServices.length > 0) {
+        return {
+          success: false,
+          mode: "requires_selection",
+          message: `${memberName}: seleccione jornada laboral o entrenamiento.`,
+          memberName,
+          ci: persona.ci,
+          memberId: persona.id.toString(),
+          services: activeServices.map((svc) => ({
+            id: svc.idinscripcion.toString(),
+            name: svc.nombre_servicio,
+            visits: svc.servicio_ingresos_ilimitados ? null : svc.ingresos_disponibles,
+            status: "active",
+            expirationDate: svc.fecha_vencimiento,
+            tipoServicio: svc.tipo_servicio,
+            branchId: svc.sucursal_id,
+            multisucursal: svc.multisucursal,
+          })),
+        };
+      }
+    }
+
     let result;
-    if (emp.estado_actual === "in") {
+    if (emp.rol !== "couch" && emp.estado_actual === "in") {
       result = await exports.registerEmployeeCheckOut(
         emp.idempleado,
         branchId,

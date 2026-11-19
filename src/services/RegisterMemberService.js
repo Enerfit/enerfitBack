@@ -155,11 +155,18 @@ exports.searchPeople = async (searchTerm) => {
         )
       )) ILIKE unaccent(LOWER($1))
     )
-    AND estado = $2
+    AND (
+      estado = $2
+      OR EXISTS (
+        SELECT 1 FROM empleados e
+        WHERE e.persona_id = personas.id
+          AND e.estado = $3
+      )
+    )
     ORDER BY apellidos, nombres
     LIMIT 10
   `,
-    [`%${normalizedSearch}%`, ESTADO.personas]
+    [`%${normalizedSearch}%`, ESTADO.personas, ESTADO.empleados]
   );
 
   return result.rows;
@@ -1173,8 +1180,16 @@ exports.hasFingerprint = async (personaId) => {
   const result = await query(
     `SELECT huella_digital IS NOT NULL AS has_fingerprint
      FROM personas
-     WHERE id = $1 AND estado = $2`,
-    [personaId, ESTADO.personas]
+     WHERE id = $1
+       AND (
+         estado = $2
+         OR EXISTS (
+           SELECT 1 FROM empleados e
+           WHERE e.persona_id = personas.id
+             AND e.estado = $3
+         )
+       )`,
+    [personaId, ESTADO.personas, ESTADO.empleados]
   );
 
   if (result.rows.length === 0) {

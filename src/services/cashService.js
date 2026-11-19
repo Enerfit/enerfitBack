@@ -1,4 +1,3 @@
-// backend/src/services/cashService.js
 const { query } = require("../../db");
 
 // ============================================
@@ -13,9 +12,6 @@ exports.getBranches = async () => {
 
 // ============================================
 // CAJAS POR SUCURSAL
-// ✅ CAMBIO: no filtra por cajas.estado (no existe en esta BD).
-//    Devuelve todas las cajas de la sucursal, junto con estado_caja
-//    (abierta/cerrada) y total.
 // ============================================
 exports.getCashBoxesByBranch = async (branchId) => {
   const result = await query(
@@ -23,24 +19,19 @@ exports.getCashBoxesByBranch = async (branchId) => {
       id, 
       nombre, 
       sucursal_id, 
+      1 AS estado,
       estado_caja,
       COALESCE(total, 0) as total
      FROM cajas 
-     WHERE sucursal_id = $1
+     WHERE sucursal_id = $1 
      ORDER BY nombre`,
     [branchId]
   );
-
-  // Como no hay columna estado, inyectamos estado:1 (activa)
-  // para que el frontend siga funcionando igual.
-  return result.rows.map((row) => ({
-    ...row,
-    estado: 1,
-  }));
+  return result.rows;
 };
 
 // ============================================
-// ESTADO DE CAJA (monto final)
+// ESTADO DE CAJA
 // ============================================
 exports.getCashBoxStatus = async (cashBoxId) => {
   try {
@@ -63,7 +54,57 @@ exports.getCashBoxStatus = async (cashBoxId) => {
 };
 
 // ============================================
-// MOVIMIENTOS POR CAJA
+// HELPER: construye WHERE para filtros de movimientos
+// ============================================
+function buildMovimientosWhere(cashBoxId, filters = {}) {
+  const conditions = ["mc.caja_id = $1"];
+  const params = [cashBoxId];
+  let paramCount = 2;
+
+  // --- Filtro por fecha (SIEMPRE en zona America/La_Paz) ---
+  if (filters.dateFilterType === "specific" && filters.specificDate) {
+    conditions.push(
+      `DATE(mc.fecha AT TIME ZONE 'America/La_Paz') = $${paramCount}`
+    );
+    params.push(filters.specificDate);
+    paramCount++;
+  } else if (
+    filters.dateFilterType === "range" &&
+    filters.startDate &&
+    filters.endDate
+  ) {
+    conditions.push(
+      `DATE(mc.fecha AT TIME ZONE 'America/La_Paz') BETWEEN $${paramCount} AND $${
+        paramCount + 1
+      }`
+    );
+    params.push(filters.startDate, filters.endDate);
+    paramCount += 2;
+  }
+
+  // --- Filtro por tipo ---
+  if (filters.type && filters.type !== "all") {
+    conditions.push(`mc.tipo = $${paramCount}`);
+    params.push(filters.type);
+    paramCount++;
+  }
+
+  // --- Filtro por empleado (por nombre completo) ---
+  if (filters.empleado && filters.empleado !== "all") {
+    conditions.push(`CONCAT(p.nombres, ' ', p.apellidos) = $${paramCount}`);
+    params.push(filters.empleado);
+    paramCount++;
+  }
+
+  return {
+    whereClause: `WHERE ${conditions.join(" AND ")}`,
+    params,
+    paramCount,
+  };
+}
+
+// ============================================
+// MOVIMIENTOS POR CAJA (con filtros + paginación)
 // ============================================
 exports.getTransactionsByCashBox = async (
   cashBoxId,
@@ -76,38 +117,25 @@ exports.getTransactionsByCashBox = async (
     console.log("📄 Paginación:", { page, pageSize });
 
     const offset = (page - 1) * pageSize;
+    const sortOrder = filters.sortOrder === "asc" ? "ASC" : "DESC";
 
-    let whereConditions = ["mc.caja_id = $1"];
-    let params = [cashBoxId];
-    let paramCount = 2;
+    const { whereClause, params, paramCount } = buildMovimientosWhere(
+      cashBoxId,
+      filters
+    );
 
-    if (filters.dateFilterType === "specific" && filters.specificDate) {
-      whereConditions.push(`DATE(mc.fecha) = $${paramCount}`);
-      params.push(filters.specificDate);
-      paramCount++;
-    } else if (
-      filters.dateFilterType === "range" &&
-      filters.startDate &&
-      filters.endDate
-    ) {
-      whereConditions.push(
-        `DATE(mc.fecha) BETWEEN $${paramCount} AND $${paramCount + 1}`
-      );
-      params.push(filters.startDate, filters.endDate);
-      paramCount += 2;
-    }
-
-    const whereClause =
-      whereConditions.length > 0
-        ? `WHERE ${whereConditions.join(" AND ")}`
-        : "WHERE mc.caja_id = $1";
-
+    // Query para contar total
     const countQuery = `
       SELECT COUNT(*) as total_count 
       FROM movimientos_caja mc
+      JOIN usuarios u ON mc.usuario_id = u.id
+      JOIN empleados e ON u.empleado_id = e.id
+      JOIN personas p ON e.persona_id = p.id
       ${whereClause}
     `;
 
+    // Query para obtener movimientos con paginación
+    // ⚠️ fecha formateada SIEMPRE en America/La_Paz
     const transactionsQuery = `
       SELECT 
         mc.id, 
@@ -115,7 +143,7 @@ exports.getTransactionsByCashBox = async (
         mc.tipo, 
         mc.descripcion, 
         mc.monto, 
-        TO_CHAR(mc.fecha, 'DD/MM/YYYY, HH24:MI:SS') as fecha,
+        TO_CHAR(mc.fecha AT TIME ZONE 'America/La_Paz', 'DD/MM/YYYY, HH24:MI:SS') as fecha,
         mc.usuario_id,
         mc.monto_anterior,
         mc.monto_actual,
@@ -127,19 +155,19 @@ exports.getTransactionsByCashBox = async (
       JOIN empleados e ON u.empleado_id = e.id
       JOIN personas p ON e.persona_id = p.id
       ${whereClause}
-      ORDER BY mc.fecha DESC
+      ORDER BY mc.fecha ${sortOrder}
       LIMIT $${paramCount} OFFSET $${paramCount + 1}
     `;
 
-    params.push(pageSize, offset);
+    const transactionsParams = [...params, pageSize, offset];
 
     console.log("🔄 Ejecutando consultas para movimientos...");
     console.log("Where clause:", whereClause);
-    console.log("Params:", params);
+    console.log("Params:", transactionsParams);
 
     const [countResult, transactionsResult] = await Promise.all([
-      query(countQuery, params.slice(0, params.length - 2)),
-      query(transactionsQuery, params),
+      query(countQuery, params),
+      query(transactionsQuery, transactionsParams),
     ]);
 
     const totalCount = parseInt(countResult.rows[0]?.total_count || 0);
@@ -153,7 +181,7 @@ exports.getTransactionsByCashBox = async (
         page,
         pageSize,
         total: totalCount,
-        totalPages: Math.ceil(totalCount / pageSize),
+        totalPages: Math.ceil(totalCount / pageSize) || 1,
       },
     };
   } catch (error) {
@@ -163,46 +191,29 @@ exports.getTransactionsByCashBox = async (
 };
 
 // ============================================
-// TOTALES DE MOVIMIENTOS
+// TOTALES DE MOVIMIENTOS (con los mismos filtros)
 // ============================================
 exports.getTransactionTotals = async (cashBoxId, filters = {}) => {
   try {
     console.log("📊 Calculando totales de movimientos con filtros:", filters);
 
-    let whereConditions = ["mc.caja_id = $1"];
-    let params = [cashBoxId];
-    let paramCount = 2;
-
-    if (filters.dateFilterType === "specific" && filters.specificDate) {
-      whereConditions.push(`DATE(mc.fecha) = $${paramCount}`);
-      params.push(filters.specificDate);
-      paramCount++;
-    } else if (
-      filters.dateFilterType === "range" &&
-      filters.startDate &&
-      filters.endDate
-    ) {
-      whereConditions.push(
-        `DATE(mc.fecha) BETWEEN $${paramCount} AND $${paramCount + 1}`
-      );
-      params.push(filters.startDate, filters.endDate);
-      paramCount += 2;
-    }
-
-    const whereClause =
-      whereConditions.length > 0
-        ? `WHERE ${whereConditions.join(" AND ")}`
-        : "WHERE mc.caja_id = $1";
+    const { whereClause, params } = buildMovimientosWhere(cashBoxId, filters);
 
     const ingresosQuery = `
       SELECT COALESCE(SUM(mc.monto), 0) as total_ingresos
       FROM movimientos_caja mc
+      JOIN usuarios u ON mc.usuario_id = u.id
+      JOIN empleados e ON u.empleado_id = e.id
+      JOIN personas p ON e.persona_id = p.id
       ${whereClause} AND mc.tipo IN ('ingreso', 'apertura')
     `;
 
     const egresosQuery = `
       SELECT COALESCE(SUM(mc.monto), 0) as total_egresos
       FROM movimientos_caja mc
+      JOIN usuarios u ON mc.usuario_id = u.id
+      JOIN empleados e ON u.empleado_id = e.id
+      JOIN personas p ON e.persona_id = p.id
       ${whereClause} AND mc.tipo IN ('egreso', 'cierre')
     `;
 
@@ -215,6 +226,8 @@ exports.getTransactionTotals = async (cashBoxId, filters = {}) => {
       ingresosResult.rows[0]?.total_ingresos || 0
     );
     const totalEgresos = parseFloat(egresosResult.rows[0]?.total_egresos || 0);
+
+    console.log("📊 Resultados de totales:", { totalIngresos, totalEgresos });
 
     return {
       totalIngresos,
@@ -238,7 +251,7 @@ exports.getLactobarTransactionsByBranch = async (branchId) => {
       mc.tipo, 
       mc.descripcion, 
       mc.monto, 
-      TO_CHAR(mc.fecha, 'DD/MM/YYYY, HH24:MI:SS') as fecha,
+      TO_CHAR(mc.fecha AT TIME ZONE 'America/La_Paz', 'DD/MM/YYYY, HH24:MI:SS') as fecha,
       mc.usuario_id,
       CONCAT(p.nombres, ' ', p.apellidos) as empleado_nombre
      FROM movimientos_caja mc
@@ -254,7 +267,7 @@ exports.getLactobarTransactionsByBranch = async (branchId) => {
 };
 
 // ============================================
-// HELPERS: registrar movimiento / abrir / cerrar caja
+// HELPERS (crear movimientos desde ventas, apertura/cierre)
 // ============================================
 exports.registrarMovimiento = async ({
   cajaId,

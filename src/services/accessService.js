@@ -580,6 +580,18 @@ exports.searchMembers = async (searchTerm, typeFilter = "all", branchId) => {
     `;
 
     const employeeResult = await query(employeeSql, employeeParams);
+    const couches = employeeResult.rows.filter(
+      (member) => member.empleado_info.rol === "couch"
+    );
+    if (couches.length > 0) {
+      const clientMatches = await exports.searchMembers(searchTerm, "cliente", branchId);
+      const servicesByPerson = new Map(clientMatches.map((member) => [Number(member.idpersona), member.servicios]));
+      for (const member of couches) {
+        member.servicios = member.empleado_info.estado === 1
+          ? (servicesByPerson.get(Number(member.idpersona)) || [])
+          : [];
+      }
+    }
     results.push(...employeeResult.rows);
   }
 
@@ -699,6 +711,13 @@ exports.registerClientAccess = async (
   branchId,
   userId
 ) => {
+  const inactiveCouch = await query(
+    `SELECT 1 FROM empleados WHERE persona_id = $1 AND rol = 'couch' AND estado <> 1 LIMIT 1`,
+    [personId]
+  );
+  if (inactiveCouch.rows.length > 0) {
+    return { success: false, message: "El couch está inactivo" };
+  }
   const client = await query(
     `
     SELECT 
@@ -1172,34 +1191,7 @@ exports.registerEmployeeCheckIn = async (employeeId, branchId, userId) => {
   const emp = employee.rows[0];
 
   if (emp.rol === "couch") {
-    if (emp.estado !== 1) {
-      return { success: false, denied: true, message: "El couch está inactivo", isLate: false, minutes: 0, rol: emp.rol };
-    }
-
-    const detail = "Ingreso al servicio - Couch";
-    const inserted = await query(
-      `INSERT INTO registros_acceso
-       (persona_id, detalle, estado, sucursal_id, usuario_registro_id, fecha, tipo_persona)
-       VALUES ($1, $2, 'exitoso', $3, $4, TIMEZONE('America/La_Paz', NOW()), 'empleado')
-       RETURNING id, TO_CHAR(fecha, 'YYYY-MM-DD HH24:MI') AS fecha`,
-      [emp.persona_id, detail, branchId, userId]
-    );
-    return {
-      success: true,
-      message: detail,
-      isLate: false,
-      minutes: 0,
-      rol: emp.rol,
-      log: {
-        id: inserted.rows[0].id.toString(),
-        timestamp: inserted.rows[0].fecha,
-        memberName: `${emp.nombres} ${emp.apellidos}`.trim(),
-        memberType: "employee",
-        detail,
-        status: "success",
-        ci: emp.ci,
-      },
-    };
+    return { success: false, denied: true, message: "Seleccione una inscripción del couch para registrar su ingreso", isLate: false, minutes: 0, rol: emp.rol };
   }
 
   const { estado } = await getEmployeeEstadoHoy(emp.persona_id);
@@ -1649,7 +1641,7 @@ exports.registerAccessByFingerprint = async (ci, branchId, userId) => {
   if (employeeResult.rows.length > 0) {
     const emp = employeeResult.rows[0];
 
-    if (emp.estado === 0) {
+    if (emp.estado === 0 || (emp.rol === "couch" && emp.estado !== 1)) {
       return {
         success: false,
         mode: "denied",
@@ -1659,102 +1651,104 @@ exports.registerAccessByFingerprint = async (ci, branchId, userId) => {
       };
     }
 
-    // Recepción con servicio activo: elegir jornada o entrenamiento antes de registrar.
-    if (emp.rol === "recepcionista" && emp.estado === 1) {
-      const matches = await exports.searchMembers(persona.ci, "cliente", branchId);
-      const clientMember = matches.find((m) => Number(m.idpersona) === Number(persona.id));
-      const activeServices = (clientMember?.servicios || []).filter(
-        (svc) => svc.estado_inscripcion === "activo"
-      );
-      if (activeServices.length > 0) {
+    if (emp.rol !== "couch") {
+      // Recepción con servicio activo: elegir jornada o entrenamiento antes de registrar.
+      if (emp.rol === "recepcionista" && emp.estado === 1) {
+        const matches = await exports.searchMembers(persona.ci, "cliente", branchId);
+        const clientMember = matches.find((m) => Number(m.idpersona) === Number(persona.id));
+        const activeServices = (clientMember?.servicios || []).filter(
+          (svc) => svc.estado_inscripcion === "activo"
+        );
+        if (activeServices.length > 0) {
+          return {
+            success: false,
+            mode: "requires_selection",
+            message: `${memberName}: seleccione jornada laboral o entrenamiento.`,
+            memberName,
+            ci: persona.ci,
+            memberId: persona.id.toString(),
+            services: activeServices.map((svc) => ({
+              id: svc.idinscripcion.toString(),
+              name: svc.nombre_servicio,
+              visits: svc.servicio_ingresos_ilimitados ? null : svc.ingresos_disponibles,
+              status: "active",
+              expirationDate: svc.fecha_vencimiento,
+              tipoServicio: svc.tipo_servicio,
+              branchId: svc.sucursal_id,
+              multisucursal: svc.multisucursal,
+            })),
+          };
+        }
+      }
+
+      let result;
+      if (emp.rol !== "couch" && emp.estado_actual === "in") {
+        result = await exports.registerEmployeeCheckOut(
+          emp.idempleado,
+          branchId,
+          userId
+        );
+      } else {
+        result = await exports.registerEmployeeCheckIn(
+          emp.idempleado,
+          branchId,
+          userId
+        );
+      }
+
+      if (result.log) {
         return {
-          success: false,
-          mode: "requires_selection",
-          message: `${memberName}: seleccione jornada laboral o entrenamiento.`,
+          success: result.success !== false && !result.denied,
+          mode: "employee",
+          message: result.message,
+          denied: !!result.denied,
+          isLate: result.isLate || false,
+          isEarly: result.isEarly || false,
+          minutos: result.minutes || 0,
+          log: result.log,
           memberName,
           ci: persona.ci,
-          memberId: persona.id.toString(),
-          services: activeServices.map((svc) => ({
-            id: svc.idinscripcion.toString(),
-            name: svc.nombre_servicio,
-            visits: svc.servicio_ingresos_ilimitados ? null : svc.ingresos_disponibles,
-            status: "active",
-            expirationDate: svc.fecha_vencimiento,
-            tipoServicio: svc.tipo_servicio,
-            branchId: svc.sucursal_id,
-            multisucursal: svc.multisucursal,
-          })),
         };
       }
-    }
 
-    let result;
-    if (emp.rol !== "couch" && emp.estado_actual === "in") {
-      result = await exports.registerEmployeeCheckOut(
-        emp.idempleado,
-        branchId,
-        userId
+      const logResult = await query(
+        `SELECT ra.id,
+                TO_CHAR(ra.fecha, 'YYYY-MM-DD HH24:MI') as fecha,
+                ra.detalle,
+                ra.estado
+         FROM registros_acceso ra
+         WHERE ra.persona_id = $1
+           AND ra.tipo_persona = 'empleado'
+           AND ra.fecha::date = TIMEZONE('America/La_Paz', NOW())::date
+         ORDER BY ra.fecha DESC
+         LIMIT 1`,
+        [persona.id]
       );
-    } else {
-      result = await exports.registerEmployeeCheckIn(
-        emp.idempleado,
-        branchId,
-        userId
-      );
-    }
 
-    if (result.log) {
+      const logRow = logResult.rows[0];
+
       return {
-        success: result.success !== false && !result.denied,
+        success: result.success !== false,
         mode: "employee",
         message: result.message,
-        denied: !!result.denied,
         isLate: result.isLate || false,
         isEarly: result.isEarly || false,
         minutos: result.minutes || 0,
-        log: result.log,
+        log: logRow
+          ? {
+              id: logRow.id.toString(),
+              timestamp: logRow.fecha,
+              memberName,
+              memberType: "employee",
+              detail: logRow.detalle,
+              status: logRow.estado === "exitoso" ? "success" : "denied",
+              ci: persona.ci,
+            }
+          : null,
         memberName,
         ci: persona.ci,
       };
     }
-
-    const logResult = await query(
-      `SELECT ra.id,
-              TO_CHAR(ra.fecha, 'YYYY-MM-DD HH24:MI') as fecha,
-              ra.detalle,
-              ra.estado
-       FROM registros_acceso ra
-       WHERE ra.persona_id = $1
-         AND ra.tipo_persona = 'empleado'
-         AND ra.fecha::date = TIMEZONE('America/La_Paz', NOW())::date
-       ORDER BY ra.fecha DESC
-       LIMIT 1`,
-      [persona.id]
-    );
-
-    const logRow = logResult.rows[0];
-
-    return {
-      success: result.success !== false,
-      mode: "employee",
-      message: result.message,
-      isLate: result.isLate || false,
-      isEarly: result.isEarly || false,
-      minutos: result.minutes || 0,
-      log: logRow
-        ? {
-            id: logRow.id.toString(),
-            timestamp: logRow.fecha,
-            memberName,
-            memberType: "employee",
-            detail: logRow.detalle,
-            status: logRow.estado === "exitoso" ? "success" : "denied",
-            ci: persona.ci,
-          }
-        : null,
-      memberName,
-      ci: persona.ci,
-    };
   }
 
   // 3. Es cliente → obtener servicios activos

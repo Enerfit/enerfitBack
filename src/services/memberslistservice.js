@@ -54,10 +54,6 @@ function buildWhereConditions({
     queryParams.push(parseInt(sucursalFilter));
   }
 
-  whereConditions.push(
-    `p.id NOT IN (SELECT persona_id FROM empleados WHERE estado = 1)`
-  );
-
   whereConditions.push(`p.estado = 0`);
 
   if (searchTerm && searchTerm.trim() !== "") {

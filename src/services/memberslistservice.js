@@ -1,12 +1,39 @@
 // server/services/memberslistservice.js
 const { query } = require("../../db");
 
+// Importe registrado en ventas asociadas a la inscripción.
+// En ventas de varias inscripciones, el total se prorratea por precio del detalle.
+const PAYMENT_JOIN = `
+  LEFT JOIN LATERAL (
+    SELECT
+      SUM(CASE WHEN x.cantidad_inscripciones = 1 THEN x.total
+               WHEN x.precio_total > 0 THEN x.total * x.precio_inscripcion / x.precio_total
+               ELSE NULL END) AS monto_pagado,
+      BOOL_OR(x.cantidad_inscripciones > 1) AS monto_estimado,
+      BOOL_OR(x.cantidad_inscripciones > 1 AND x.precio_total <= 0) AS monto_indeterminado
+    FROM (
+      SELECT vs.id, vs.total,
+             COUNT(DISTINCT d.inscripcion_id) AS cantidad_inscripciones,
+             SUM(d.precio) AS precio_total,
+             SUM(d.precio) FILTER (WHERE d.inscripcion_id = c.inscripcion_id) AS precio_inscripcion
+      FROM ventas_servicios vs
+      INNER JOIN detalle_venta_servicios d ON d.venta_servicio_id = vs.id
+      WHERE EXISTS (
+        SELECT 1 FROM detalle_venta_servicios d2
+        WHERE d2.venta_servicio_id = vs.id AND d2.inscripcion_id = c.inscripcion_id
+      )
+      GROUP BY vs.id, vs.total
+    ) x
+  ) pago ON TRUE
+`;
+
 // ============================================
 // HELPER: construir WHERE base
 // ============================================
 function buildWhereConditions({
   searchTerm,
   serviceFilter,
+  statusFilter,
   sucursalFilter,
   userSucursalId,
   userRol,
@@ -76,6 +103,17 @@ function buildWhereConditions({
     queryParams.push(serviceFilter);
   }
 
+  if (statusFilter === "active" || statusFilter === "inactive") {
+    const activeCondition = `EXISTS (
+      SELECT 1 FROM inscripciones i2
+      WHERE i2.persona_id = i.persona_id
+        AND i2.sucursal_id = i.sucursal_id
+        AND i2.estado = 1
+        AND i2.estado_inscripcion = 'activo'
+    )`;
+    whereConditions.push(statusFilter === "active" ? activeCondition : `NOT ${activeCondition}`);
+  }
+
   return { whereConditions, queryParams, paramCount };
 }
 
@@ -100,6 +138,7 @@ const getMembers = async (
     const { whereConditions, queryParams, paramCount } = buildWhereConditions({
       searchTerm,
       serviceFilter,
+      statusFilter,
       sucursalFilter,
       userSucursalId,
       userRol,
@@ -283,6 +322,8 @@ const getMembers = async (
           CASE WHEN c.es_activa THEN 'active' ELSE 'inactive' END AS servicio_status,
           c.tipo_servicio,
           vpi.coach_id,
+           CASE WHEN pago.monto_indeterminado THEN NULL ELSE ROUND(pago.monto_pagado, 2) END AS monto_pagado,
+           COALESCE(pago.monto_estimado, false) AS monto_estimado,
           CASE 
             WHEN vpi.coach_id IS NOT NULL 
               THEN CONCAT(pc.nombres, ' ', pc.apellidos)
@@ -295,6 +336,7 @@ const getMembers = async (
           ON ec.id = vpi.coach_id
         LEFT JOIN personas pc 
           ON pc.id = ec.persona_id
+        ${PAYMENT_JOIN}
         WHERE c.rn_por_tipo = 1
         ORDER BY c.persona_id, c.sucursal_id, 
                  CASE WHEN c.es_activa THEN 0 ELSE 1 END,
@@ -321,6 +363,8 @@ const getMembers = async (
         ingresos_disponibles: svc.ingresos_disponibles,
         coachId: svc.coach_id || null,
         coachNombre: svc.coach_nombre || null,
+          montoPagado: svc.monto_pagado == null ? null : Number(svc.monto_pagado),
+          montoEstimado: svc.monto_estimado === true,
       });
     });
 
@@ -369,6 +413,7 @@ const getAllMembers = async (
     const { whereConditions, queryParams } = buildWhereConditions({
       searchTerm,
       serviceFilter,
+      statusFilter,
       sucursalFilter,
       userSucursalId,
       userRol,
@@ -447,6 +492,8 @@ const getAllMembers = async (
         TO_CHAR(c.fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento,
         CASE WHEN c.es_activa THEN 'active' ELSE 'inactive' END AS servicio_status,
         vpi.coach_id,
+           CASE WHEN pago.monto_indeterminado THEN NULL ELSE ROUND(pago.monto_pagado, 2) END AS monto_pagado,
+           COALESCE(pago.monto_estimado, false) AS monto_estimado,
         CASE 
           WHEN vpi.coach_id IS NOT NULL 
             THEN CONCAT(pc.nombres, ' ', pc.apellidos)
@@ -469,6 +516,7 @@ const getAllMembers = async (
         ON ec.id = vpi.coach_id
       LEFT JOIN personas pc 
         ON pc.id = ec.persona_id
+      ${PAYMENT_JOIN}
       WHERE c.rn_por_tipo = 1
       ORDER BY c.nombres, c.apellidos, c.sucursal_id,
                CASE WHEN c.es_activa THEN 0 ELSE 1 END,
@@ -517,6 +565,8 @@ const getAllMembers = async (
           ingresos_disponibles: row.ingresos_disponibles,
           coachId: row.coach_id || null,
           coachNombre: row.coach_nombre || null,
+          montoPagado: row.monto_pagado == null ? null : Number(row.monto_pagado),
+          montoEstimado: row.monto_estimado === true,
         });
       }
     });

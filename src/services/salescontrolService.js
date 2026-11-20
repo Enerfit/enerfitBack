@@ -977,8 +977,7 @@ const anularVenta = async (saleId, saleType, actor) => {
       `SELECT 
          v.id,
          v.fecha,
-         (v.fecha)::date AS fecha_dia,
-         (NOW() AT TIME ZONE 'America/La_Paz')::date AS hoy_dia,
+         ((NOW() AT TIME ZONE 'America/La_Paz')::date - (v.fecha)::date) AS dias_antiguedad,
          v.sucursal_id,
          v.caja_id,
          v.empleado_id,
@@ -997,15 +996,9 @@ const anularVenta = async (saleId, saleType, actor) => {
 
     const venta = ventaResult.rows[0];
 
-    const fechaVentaStr = venta.fecha_dia
-      ? new Date(venta.fecha_dia).toISOString().slice(0, 10)
-      : null;
-    const hoyStr = venta.hoy_dia
-      ? new Date(venta.hoy_dia).toISOString().slice(0, 10)
-      : null;
-
-    if (!fechaVentaStr || !hoyStr || fechaVentaStr !== hoyStr) {
-      throw new Error("Solo se pueden anular ventas realizadas el día de hoy");
+    const diasAntiguedad = venta.dias_antiguedad;
+    if (diasAntiguedad == null || diasAntiguedad < 0 || diasAntiguedad > 7) {
+      throw new Error("Solo se pueden anular ventas realizadas hoy o hasta 7 días atrás");
     }
 
     let cuponId = venta.cupon_id || null;

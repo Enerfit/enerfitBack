@@ -5,18 +5,28 @@ const { query, pool } = require("../../db");
 // HELPERS SQL
 // ============================================
 
-// Subquery reutilizable: cuenta inscripciones del mismo coach para la persona
-// de la inscripción "i". Devuelve 1 para nueva, ≥2 para reinscripción.
+// Subquery reutilizable: posición de la inscripción "dvs" dentro del historial
+// de la misma persona con el mismo coach. Solo cuenta las inscripciones
+// ANTERIORES o IGUAL a la actual (por fecha de venta y luego id), así la
+// primera vez que la persona entra con ese coach es 1 (nueva) y las
+// siguientes son ≥2 (reinscripción).
 const SQL_NUMERO_INSCRIPCION_COACH = `
   (
     SELECT COUNT(*)
     FROM detalle_venta_servicios dvs2
     INNER JOIN inscripciones i2 ON i2.id = dvs2.inscripcion_id
-    INNER JOIN detalle_venta_servicios dvs_actual ON dvs_actual.id = dvs.id
-    INNER JOIN inscripciones i_actual ON i_actual.id = dvs_actual.inscripcion_id
+    INNER JOIN ventas_servicios vs2 ON vs2.id = dvs2.venta_servicio_id
     WHERE dvs2.coach_id = dvs.coach_id
-      AND i2.persona_id = i_actual.persona_id
       AND dvs2.coach_id IS NOT NULL
+      AND i2.persona_id = (
+        SELECT i_act.persona_id FROM inscripciones i_act
+        WHERE i_act.id = dvs.inscripcion_id
+      )
+      AND (vs2.fecha, dvs2.id) <= (
+        (SELECT vs_act.fecha FROM ventas_servicios vs_act
+         WHERE vs_act.id = dvs.venta_servicio_id),
+        dvs.id
+      )
   )
 `;
 

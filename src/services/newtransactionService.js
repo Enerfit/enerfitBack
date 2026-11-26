@@ -110,11 +110,11 @@ exports.createTransaction = async ({
     }
 
     // 3. Insertar movimiento
-    // ✅ FIX: Usamos NOW() (hora del servidor) sin TIMEZONE() para no desplazar la hora
+    // Hora de Bolivia, igual que el resto de módulos que escriben en movimientos_caja
     const result = await client.query(
       `INSERT INTO movimientos_caja 
         (caja_id, usuario_id, monto, tipo, descripcion, monto_anterior, monto_actual, fecha)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, TIMEZONE('America/La_Paz', NOW()))
        RETURNING id`,
       [
         idCaja,
@@ -278,11 +278,11 @@ exports.openCashRegister = async (
     );
 
     // 3. Registrar movimiento de apertura
-    // ✅ FIX: Usamos NOW() (hora del servidor) sin TIMEZONE() para no desplazar la hora
+    // Hora de Bolivia, igual que el resto de módulos que escriben en movimientos_caja
     await client.query(
       `INSERT INTO movimientos_caja 
         (caja_id, usuario_id, monto, tipo, descripcion, monto_anterior, monto_actual, fecha)
-       VALUES ($1, $2, $3, 'apertura', $4, $5, $3, NOW())`,
+       VALUES ($1, $2, $3, 'apertura', $4, $5, $3, TIMEZONE('America/La_Paz', NOW()))`,
       [
         caja_id,
         usuario_id,
@@ -346,11 +346,11 @@ exports.closeCashRegister = async (
     );
 
     // 3. Registrar movimiento de cierre
-    // ✅ FIX: Usamos NOW() (hora del servidor) sin TIMEZONE() para no desplazar la hora
+    // Hora de Bolivia, igual que el resto de módulos que escriben en movimientos_caja
     await client.query(
       `INSERT INTO movimientos_caja 
         (caja_id, usuario_id, monto, tipo, descripcion, monto_anterior, monto_actual, fecha)
-       VALUES ($1, $2, $3, 'cierre', $4, $5, $3, NOW())`,
+       VALUES ($1, $2, $3, 'cierre', $4, $5, $3, TIMEZONE('America/La_Paz', NOW()))`,
       [
         caja_id,
         usuario_id,
